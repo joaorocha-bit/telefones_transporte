@@ -120,7 +120,7 @@ def renderizar_qr_code_auto():
     
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente. Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos.", width=320)
+        st.image(qr_bytes, caption=f"Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos.", width=320)
     with col2:
         st.markdown("### Instruções:")
         st.write("1. Abra a câmera do celular.")
