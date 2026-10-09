@@ -188,7 +188,7 @@ def renderizar_qr_code_auto(kiosk_mode: bool = False):
         with col1:
             st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min", use_container_width=True)
         with col2:
-            st.markdown("## 📱 Instruções de Retirada / Devolução:")
+            st.markdown("## Instruções de Retirada / Devolução:")
             st.markdown("### 1. Abra a câmera do seu celular.")
             st.markdown("### 2. Escaneie o QR Code.")
             st.markdown("### 3. Informe sua matrícula e código do telefone.")
@@ -199,7 +199,7 @@ def renderizar_qr_code_auto(kiosk_mode: bool = False):
         with col1:
             st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente. Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos.", width=340)
         with col2:
-            st.markdown("### 📱 Instruções de Retirada / Devolução:")
+            st.markdown("### Instruções de Retirada / Devolução:")
             st.write("1. Abra a câmera do celular.")
             st.write("2. Escaneie o QR Code.")
             st.write("3. Informe sua matrícula e código do telefone.")
