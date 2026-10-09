@@ -68,6 +68,48 @@ def registrar_movimentacao(matricula: str, nome: str, telefone_id: str, acao: st
     nova_linha = [timestamp_atual, matricula, nome, telefone_id, acao]
     sheet.append_row(nova_linha)
 
+def consultar_status_telefone_especifico(codigo_tel: str) -> tuple[str, str, bool]:
+    """
+    Retorna: (status_atual, responsavel_atual, existe_no_cadastro)
+    status_atual pode ser 'Em Uso' ou 'Disponível'
+    """
+    try:
+        sheet_telefones = obter_aba_planilha("Controle_Telefone")
+        sheet_historico = obter_aba_planilha("Historico")
+        
+        df_telefones = pd.DataFrame(sheet_telefones.get_all_records())
+        
+        if df_telefones.empty or "Codigo_Telefone" not in df_telefones.columns:
+            return "Disponível", "", False
+        
+        df_telefones["Codigo_Telefone"] = df_telefones["Codigo_Telefone"].astype(str).str.strip().str.upper()
+        codigo_tel_upper = codigo_tel.strip().upper()
+        
+        # Verifica se o aparelho existe na aba Controle_Telefone
+        if codigo_tel_upper not in df_telefones["Codigo_Telefone"].values:
+            return "Não Encontrado", "", False
+        
+        df_historico = pd.DataFrame(sheet_historico.get_all_records())
+        
+        if not df_historico.empty and "Codigo_Telefone" in df_historico.columns:
+            df_historico["Codigo_Telefone"] = df_historico["Codigo_Telefone"].astype(str).str.strip().str.upper()
+            movs = df_historico[df_historico["Codigo_Telefone"] == codigo_tel_upper]
+            
+            if not movs.empty:
+                ultima_mov = movs.iloc[-1]
+                acao = str(ultima_mov.get("Acao", "")).strip()
+                nome = str(ultima_mov.get("Nome", "")).strip()
+                
+                if acao.lower() == "retirada":
+                    return "Em Uso", nome, True
+                else:
+                    return "Disponível", "", True
+
+        return "Disponível", "", True
+    except Exception as e:
+        st.error(f"Erro ao verificar status do telefone: {e}")
+        return "Erro", "", False
+
 def carregar_status_telefones() -> pd.DataFrame:
     try:
         sheet_telefones = obter_aba_planilha("Controle_Telefone")
@@ -186,22 +228,22 @@ def renderizar_qr_code_auto(kiosk_mode: bool = False):
     if kiosk_mode:
         col1, col2 = st.columns([1, 1])
         with col1:
-            st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min", use_container_width=True)
+            st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min.", use_container_width=True)
         with col2:
             st.markdown("## Instruções de Retirada / Devolução:")
-            st.markdown("### 1. Abra a câmera do seu celular.")
-            st.markdown("### 2. Escaneie o QR Code.")
+            st.markdown("### 1. Abra a câmera do celular;")
+            st.markdown("### 2. Escaneie o QR Code;")
             st.markdown("### 3. Informe sua matrícula e código do telefone.")
             st.markdown("---")
-            st.info("A validação é feita em tempo real e registrada no sistema.")
+            st.info("💡 A validação é feita em tempo real e registrada no sistema.")
     else:
         col1, col2 = st.columns([2, 1])
         with col1:
-            st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente. Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos.", width=340)
+            st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min.", width=340)
         with col2:
             st.markdown("### Instruções de Retirada / Devolução:")
-            st.write("1. Abra a câmera do celular.")
-            st.write("2. Escaneie o QR Code.")
+            st.write("1. Abra a câmera do celular;")
+            st.write("2. Escaneie o QR Code;")
             st.write("3. Informe sua matrícula e código do telefone.")
 
 # ==========================================
@@ -234,7 +276,6 @@ def main():
     # MODO TELA CHEIA (KIOSK)
     # ----------------------------------------------------
     if st.session_state.get("modo_kiosk", False):
-        # Oculta menus, abas e padding padrão do Streamlit
         st.markdown("""
             <style>
                 header {visibility: hidden !important;}
@@ -245,7 +286,6 @@ def main():
             </style>
         """, unsafe_allow_html=True)
         
-        # Tenta acionar Fullscreen nativo do navegador via JavaScript
         components.html("""
             <script>
                 var elem = window.parent.document.documentElement;
@@ -258,7 +298,7 @@ def main():
 
         col_top, col_btn = st.columns([4, 1])
         with col_top:
-            st.title("📱 Painel de Retirada de Telefones")
+            st.title("Painel de Retirada de Telefones")
         with col_btn:
             if st.button("❌ Sair da Tela Cheia", type="secondary", use_container_width=True):
                 st.session_state["modo_kiosk"] = False
@@ -269,9 +309,9 @@ def main():
         return
 
     # ----------------------------------------------------
-    # MODO NORMALE (ABAS)
+    # MODO NORMAL (ABAS)
     # ----------------------------------------------------
-    st.title("📱 Gestão de Telefones")
+    st.title("Gestão de Telefones")
     
     aba_usuario, aba_admin, aba_status = st.tabs([
         "Formulário de Operação", 
@@ -312,14 +352,24 @@ def main():
                     elif matricula not in base_colaboradores:
                         st.error(f"❌ Matrícula '{matricula}' não encontrada. Verifique com a supervisão.")
                     else:
-                        nome_colaborador = base_colaboradores[matricula]
-                        registrar_movimentacao(matricula, nome_colaborador, codigo_tel, tipo_acao)
+                        # Validação de regras de Status (Em Uso vs Disponível)
+                        status_atual, responsavel_atual, existe_no_cadastro = consultar_status_telefone_especifico(codigo_tel)
                         
-                        st.query_params.clear()
-                        
-                        st.balloons()
-                        st.success(f"✅ **{tipo_acao}** registrada com sucesso!\n- **Colaborador:** {nome_colaborador}\n- **Aparelho:** {codigo_tel}")
-                        st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
+                        if not existe_no_cadastro:
+                            st.error(f"❌ O código de telefone **'{codigo_tel}'** não consta cadastrado no sistema (aba Controle_Telefone).")
+                        elif tipo_acao == "Retirada" and status_atual == "Em Uso":
+                            st.error(f"❌ O telefone **'{codigo_tel}'** já está em uso por **{responsavel_atual}**. Não é possível realizar uma nova retirada.")
+                        elif tipo_acao == "Devolução" and status_atual == "Disponível":
+                            st.error(f"❌ O telefone **'{codigo_tel}'** consta como devolvido/disponível. Não é possível registrar devolução.")
+                        else:
+                            nome_colaborador = base_colaboradores[matricula]
+                            registrar_movimentacao(matricula, nome_colaborador, codigo_tel, tipo_acao)
+                            
+                            st.query_params.clear()
+                            
+                            st.balloons()
+                            st.success(f"✅ **{tipo_acao}** registrada com sucesso!\n- **Colaborador:** {nome_colaborador}\n- **Aparelho:** {codigo_tel}")
+                            st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
 
     # --- ABA 2: PAINEL GERADOR DE QR CODE ---
     with aba_admin:
@@ -328,7 +378,7 @@ def main():
             
             c_btn1, _ = st.columns([1, 2])
             with c_btn1:
-                if st.button("Entrar em Modo Tela Cheia.", use_container_width=True, type="primary"):
+                if st.button("Entrar em Modo Tela Cheia", use_container_width=True, type="primary"):
                     st.session_state["modo_kiosk"] = True
                     st.rerun()
 
@@ -338,7 +388,7 @@ def main():
     # --- ABA 3: STATUS DOS TELEFONES ---
     with aba_status:
         if verificar_login_admin(key_suffix="status_tab"):
-            st.subheader("📋 Inventário e Status dos Telefones")
+            st.subheader("Inventário e Status dos Telefones")
             
             col_ref, _ = st.columns([1, 3])
             with col_ref:
