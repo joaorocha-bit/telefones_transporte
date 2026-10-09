@@ -16,14 +16,13 @@ st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout=
 APP_URL = st.secrets.get("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
 SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
-TEMPO_EXPIRACAO_MINUTOS = 1
+TEMPO_EXPIRACAO_MINUTOS = 1 
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
-# Inicializa a sessão administrativa caso não exista
 if "admin_autenticado" not in st.session_state:
     st.session_state["admin_autenticado"] = False
 
@@ -64,6 +63,68 @@ def registrar_movimentacao(matricula: str, nome: str, telefone_id: str, acao: st
     timestamp_atual = datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M:%S")
     nova_linha = [timestamp_atual, matricula, nome, telefone_id, acao]
     sheet.append_row(nova_linha)
+
+def carregar_status_telefones() -> pd.DataFrame:
+    """Busca a lista master de telefones e cruza com a aba Historico para calcular o status atual."""
+    try:
+        sheet_telefones = obter_aba_planilha("Controle_Telefone")
+        sheet_historico = obter_aba_planilha("Historico")
+        
+        df_telefones = pd.DataFrame(sheet_telefones.get_all_records())
+        df_historico = pd.DataFrame(sheet_historico.get_all_records())
+        
+        if df_telefones.empty or "Codigo_Telefone" not in df_telefones.columns:
+            return pd.DataFrame()
+        
+        # Padroniza os códigos de telefone para evitar falhas por espaços/caixa alta
+        df_telefones["Codigo_Telefone"] = df_telefones["Codigo_Telefone"].astype(str).str.strip().str.upper()
+        
+        status_lista = []
+        
+        if not df_historico.empty and "Codigo_Telefone" in df_historico.columns:
+            df_historico["Codigo_Telefone"] = df_historico["Codigo_Telefone"].astype(str).str.strip().str.upper()
+            
+            for cod in df_telefones["Codigo_Telefone"]:
+                # Filtra todas as movimentações do aparelho específico
+                movs = df_historico[df_historico["Codigo_Telefone"] == cod]
+                
+                if not movs.empty:
+                    # Pega a última linha registrada para esse telefone
+                    ultima_mov = movs.iloc[-1]
+                    acao = str(ultima_mov.get("Acao", "")).strip()
+                    nome = str(ultima_mov.get("Nome", "")).strip()
+                    data_hora = str(ultima_mov.get("Data_Hora", "")).strip()
+                    
+                    if acao.lower() == "retirada":
+                        status = "🔴 Em Uso"
+                        responsavel = nome
+                    else:
+                        status = "🟢 Disponível"
+                        responsavel = "-"
+                else:
+                    status = "🟢 Disponível"
+                    responsavel = "-"
+                    data_hora = "-"
+                    
+                status_lista.append({
+                    "Código Telefone": cod,
+                    "Status": status,
+                    "Responsável Atual": responsavel,
+                    "Última Atualização": data_hora
+                })
+        else:
+            for cod in df_telefones["Codigo_Telefone"]:
+                status_lista.append({
+                    "Código Telefone": cod,
+                    "Status": "🟢 Disponível",
+                    "Responsável Atual": "-",
+                    "Última Atualização": "-"
+                })
+                
+        return pd.DataFrame(status_lista)
+    except Exception as e:
+        st.error(f"Erro ao processar status dos telefones: {e}")
+        return pd.DataFrame()
 
 # ==========================================
 # FUNÇÕES DE VALIDAÇÃO DO QR CODE
@@ -120,7 +181,6 @@ def gerar_imagem_qr(url_base: str) -> bytes:
 # ==========================================
 @st.fragment(run_every="60s")
 def renderizar_qr_code_auto():
-    """Esta função roda sozinha a cada 60 segundos no navegador sem recarregar a página toda."""
     qr_bytes = gerar_imagem_qr(APP_URL)
     
     col1, col2 = st.columns([2, 1])
@@ -133,12 +193,39 @@ def renderizar_qr_code_auto():
         st.write("3. Preencha o formulário para retirar ou devolver.")
 
 # ==========================================
+# COMPONENTE DE AUTENTICAÇÃO ADMINISTRATIVA
+# ==========================================
+def verificar_login_admin() -> bool:
+    """Gerencia a autenticação das abas restritas."""
+    if not st.session_state["admin_autenticado"]:
+        with st.expander("🔑 Acesso Administrativo Requerido", expanded=True):
+            senha_input = st.text_input("Digite a senha do painel:", type="password", key="pwd_admin_global")
+            if st.button("Acessar", type="primary", key="btn_login_global"):
+                if senha_input == ADMIN_PASSWORD:
+                    st.session_state["admin_autenticado"] = True
+                    st.rerun()
+                else:
+                    st.error("❌ Senha incorreta.")
+        return False
+    else:
+        with st.expander("⚙️ Sessão Administrativa Ativa (Clique para fechar/sair)", expanded=False):
+            st.success("✅ Você está autenticado como Administrador.")
+            if st.button("🔒 Bloquear Painel / Sair", key="btn_logout"):
+                st.session_state["admin_autenticado"] = False
+                st.rerun()
+        return True
+
+# ==========================================
 # INTERFACE DO APP
 # ==========================================
 def main():
     st.title("📱 Gestão de Telefones")
     
-    aba_usuario, aba_admin = st.tabs(["Formulário de Operação", "Painel Físico / Gerador"])
+    aba_usuario, aba_admin, aba_status = st.tabs([
+        "📲 Formulário de Operação", 
+        "📺 Painel Físico / Gerador", 
+        "📊 Status dos Telefones"
+    ])
 
     # ----------------------------------------------------
     # ABA 1: FORMULÁRIO DO COLABORADOR
@@ -185,32 +272,61 @@ def main():
                         st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
 
     # ----------------------------------------------------
-    # ABA 2: PAINEL GERADOR DE QR CODE (PAINEL FÍSICO)
+    # ABA 2: PAINEL GERADOR DE QR CODE
     # ----------------------------------------------------
     with aba_admin:
-        # Se NÃO estiver autenticado: exibe o campo de senha aberto
-        if not st.session_state["admin_autenticado"]:
-            with st.expander("🔑 Acesso Administrativo", expanded=True):
-                senha_input = st.text_input("Digite a senha do painel:", type="password", key="pwd_input")
-                if st.button("Acessar Painel", type="primary"):
-                    if senha_input == ADMIN_PASSWORD:
-                        st.session_state["admin_autenticado"] = True
-                        st.rerun()
-                    else:
-                        st.error("❌ Senha incorreta.")
-        
-        # Se JÁ ESTIVER autenticado: recolhe a área administrativa e mostra o display limpo
-        else:
-            with st.expander("⚙️ Configurações do Painel (Clique para recolher/expandir)", expanded=False):
-                st.success("✅ Painel Ativo")
-                st.caption(f"📍 **URL configurada:** `{APP_URL}`")
-                if st.button("🔒 Bloquear Painel / Sair"):
-                    st.session_state["admin_autenticado"] = False
+        if verificar_login_admin():
+            st.markdown("---")
+            renderizar_qr_code_auto()
+
+    # ----------------------------------------------------
+    # ABA 3: STATUS DOS TELEFONES (ESTOQUE/DISPONIBILIDADE)
+    # ----------------------------------------------------
+    with aba_status:
+        if verificar_login_admin():
+            st.subheader("📋 Inventário e Status dos Telefones")
+            
+            col_ref, _ = st.columns([1, 3])
+            with col_ref:
+                if st.button("🔄 Atualizar Dados", use_container_width=True):
                     st.rerun()
 
-            st.markdown("---")
-            # Exibe o display do QR Code de forma limpa na tela
-            renderizar_qr_code_auto()
+            # Carrega e processa os dados do Google Sheets
+            with st.spinner("Consultando dados da planilha..."):
+                df_status = carregar_status_telefones()
+
+            if df_status.empty:
+                st.warning("⚠️ Nenhum telefone encontrado na aba 'Controle_Telefone' ou erro na leitura.")
+            else:
+                # Métricas Rápidas no Topo
+                total_tels = len(df_status)
+                em_uso = len(df_status[df_status["Status"] == "🔴 Em Uso"])
+                disponiveis = len(df_status[df_status["Status"] == "🟢 Disponível"])
+                
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Total Cadastrado", total_tels)
+                m2.metric("🔴 Em Uso", em_uso)
+                m3.metric("🟢 Disponíveis", disponiveis)
+                
+                st.markdown("---")
+                
+                # Campo de Busca
+                busca = st.text_input("🔍 Buscar por Código do Telefone ou Colaborador:").strip().lower()
+                
+                if busca:
+                    df_exibicao = df_status[
+                        df_status["Código Telefone"].str.lower().str.contains(busca) |
+                        df_status["Responsável Atual"].str.lower().str.contains(busca)
+                    ]
+                else:
+                    df_exibicao = df_status
+
+                # Exibição em Tabela Formatada
+                st.dataframe(
+                    df_exibicao,
+                    use_container_width=True,
+                    hide_index=True
+                )
 
 if __name__ == "__main__":
     main()
