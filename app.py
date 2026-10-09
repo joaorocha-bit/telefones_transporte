@@ -1,103 +1,196 @@
 import streamlit as st
 import qrcode
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import io
-import os
+import hmac
+import hashlib
+import gspread
+from google.oauth2.service_account import Credentials
 
-# Configuração da página
+# ==========================================
+# CONFIGURAÇÃO E SEGURANÇA
+# ==========================================
 st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout="centered")
 
-# ==========================================
-# 1. SIMULAÇÃO DE BANCO DE DADOS (Pode ser substituído por consulta a banco ou planilha)
-# ==========================================
-COLABORADORES = {
-    "1001": "Ana Silva",
-    "1002": "Carlos Eduardo",
-    "1003": "Mariana Costa"
-}
+# Chave secreta usada para assinar digitalmente os QR Codes (altere no .streamlit/secrets.toml em produção)
+SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
+TEMPO_EXPIRACAO_MINUTOS = 3 # Validade máxima do QR Code em minutos
 
-ARQUIVO_PLANILHA = "registro_retiradas.csv" # Usando CSV local para MVP
+# SCOPES para permissão no Google Sheets e Drive
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
 
-def salvar_registro(matricula, nome, telefone_id):
-    """Salva o registro na planilha/CSV com o timestamp atual."""
-    novo_registro = pd.DataFrame([{
-        "Matricula": matricula,
-        "Colaborador": nome,
-        "Codigo_Telefone": telefone_id,
-        "Data_Hora": datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    }])
+# ==========================================
+# FUNÇÕES DE AUTENTICAÇÃO E GOOGLE SHEETS
+# ==========================================
+@st.cache_resource
+def conectar_google_sheets():
+    """Conecta na API do Google Sheets usando as credenciais do Streamlit Secrets."""
+    try:
+        credentials_dict = dict(st.secrets["gcp_service_account"])
+        credentials = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
+        client = gspread.authorize(credentials)
+        return client
+    except Exception as e:
+        st.error(f"Erro ao conectar com Google Sheets: {e}")
+        return None
+
+def obter_aba_planilha(nome_aba: str):
+    """Acessa uma aba específica da planilha informada nos secrets."""
+    client = conectar_google_sheets()
+    if client:
+        sheet_id = st.secrets["SPREADSHEET_ID"]
+        return client.open_by_key(sheet_id).worksheet(nome_aba)
+    return None
+
+def carregar_base_colaboradores() -> dict:
+    """Busca a aba 'Colaboradores' no Google Sheets e retorna um de/para {Matricula: Nome}."""
+    try:
+        sheet = obter_aba_planilha("Colaboradores")
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
+        # Normaliza colunas para evitar erros de digitação
+        df["Matricula"] = df["Matricula"].astype(str).str.strip()
+        return dict(zip(df["Matricula"], df["Nome"]))
+    except Exception as e:
+        st.error(f"Erro ao carregar colaboradores do Google Sheets: {e}")
+        return {}
+
+def registrar_movimentacao(matricula: str, nome: str, telefone_id: str, acao: str):
+    """Insere um novo registro de Retirada ou Devolução no Google Sheets."""
+    sheet = obter_aba_planilha("Historico")
+    timestamp_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    nova_linha = [timestamp_atual, matricula, nome, telefone_id, acao]
+    sheet.append_row(nova_linha)
+
+# ==========================================
+# FUNÇÕES DO QR CODE DINÂMICO (TOKEN ANTIFRAUDE)
+# ==========================================
+def gerar_assinatura(timestamp_str: str) -> str:
+    """Gera um hash HMAC para garantir que o QR Code não foi adulterado."""
+    return hmac.new(
+        SECRET_KEY.encode(),
+        timestamp_str.encode(),
+        hashlib.sha256
+    ).hexdigest()[:10] # Retorna os 10 primeiros caracteres da assinatura
+
+def validar_token(t_param: str, s_param: str) -> tuple[bool, str]:
+    """Valida se o token do QR Code é autêntico e se não expirou."""
+    if not t_param or not s_param:
+        return False, "Link inválido. Escaneie o QR Code na base física."
     
-    if os.path.exists(ARQUIVO_PLANILHA):
-        df = pd.read_csv(ARQUIVO_PLANILHA)
-        df = pd.concat([df, novo_registro], ignore_index=True)
-    else:
-        df = novo_registro
+    # 1. Valida a integridade da assinatura
+    assinatura_esperada = gerar_assinatura(t_param)
+    if not hmac.compare_digest(assinatura_esperada, s_param):
+        return False, "Assinatura do QR Code é inválida ou foi alterada."
+    
+    # 2. Valida o tempo de expiração
+    try:
+        timestamp_qr = int(t_param)
+        agora = int(datetime.now(timezone.utc).timestamp())
+        diferenca_segundos = agora - timestamp_qr
         
-    df.to_csv(ARQUIVO_PLANILHA, index=False)
+        if diferenca_segundos < 0:
+            return False, "Horário do servidor desalinhado."
+        
+        if diferenca_segundos > (TEMPO_EXPIRACAO_MINUTOS * 60):
+            return False, f"⚠️ Este QR Code expirou há {int((diferenca_segundos - TEMPO_EXPIRACAO_MINUTOS*60)/60)} minutos. Por favor, escaneie o novo QR Code exibido na tela da base."
+            
+    except ValueError:
+        return False, "Formato do parâmetro de tempo inválido."
+        
+    return True, "Token Válido"
 
-def gerar_qr_code(url_base, token_aleatorio=""):
-    """Gera a imagem do QR Code em bytes para o Streamlit renderizar."""
-    url_final = f"{url_base}?token={token_aleatorio}" if token_aleatorio else url_base
+def gerar_imagem_qr(url_base: str) -> bytes:
+    """Cria um novo QR Code codificando a URL + Timestamp + Assinatura."""
+    timestamp_str = str(int(datetime.now(timezone.utc).timestamp()))
+    assinatura = gerar_assinatura(timestamp_str)
     
-    qr = qrcode.QRCode(version=1, box_size=10, border=5)
-    qr.add_data(url_final)
+    url_com_token = f"{url_base}?t={timestamp_str}&s={assinatura}"
+    
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(url_com_token)
     qr.make(fit=True)
     
-    img = qr.make_image(fill_color="black", back_color="white")
+    img = qr.make_image(fill_color="#1E1E1E", back_color="white")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
 
 # ==========================================
-# 2. INTERFACE DO APP (Frontend)
+# INTERFACE DO APP (STREAMLIT)
 # ==========================================
 def main():
-    st.title("📱 Sistema de Retirada de Telefones")
+    st.title("📱 Gestão de Telefones")
     
-    # Divide a interface em duas abas
-    aba_form, aba_admin = st.tabs(["📋 Formulário de Retirada", "⚙️ Gerador de QR Code (Admin)"])
+    aba_usuario, aba_admin = st.tabs(["📲 Formulário de Operação", "📺 Painel Físico / Gerador de QR Code"])
 
-    # --- ABA 1: FORMULÁRIO ---
-    with aba_form:
-        st.markdown("### Registre a retirada do equipamento")
+    # ----------------------------------------------------
+    # ABA 1: FORMULÁRIO DO COLABORADOR
+    # ----------------------------------------------------
+    with aba_usuario:
+        # Pega parâmetros passados via URL ao escanear o QR Code
+        params = st.query_params
+        t_param = params.get("t")
+        s_param = params.get("s")
         
-        with st.form("form_retirada", clear_on_submit=True):
-            matricula = st.text_input("Matrícula do Colaborador")
-            codigo_tel = st.text_input("Código do Telefone (Ex: TEL-01)")
+        token_valido, mensagem_erro = validar_token(t_param, s_param)
+        
+        if not token_valido:
+            st.error(mensagem_erro)
+            st.info("💡 Dirija-se até a base presencial de telefones e escaneie o QR Code atualizado exibido no monitor.")
+        else:
+            st.success("🔒 Acesso liberado via QR Code presencial.")
+            st.markdown("---")
             
-            submit = st.form_submit_button("Registrar Retirada", type="primary")
+            # Carrega colaboradores do Google Sheets
+            base_colaboradores = carregar_base_colaboradores()
             
-            if submit:
-                if not matricula or not codigo_tel:
-                    st.warning("⚠️ Preencha todos os campos antes de registrar.")
-                elif matricula not in COLABORADORES:
-                    st.error("❌ Matrícula não encontrada no sistema. Verifique o número digitado.")
-                else:
-                    nome_colaborador = COLABORADORES[matricula]
-                    salvar_registro(matricula, nome_colaborador, codigo_tel)
-                    st.success(f"✅ Retirada registrada com sucesso para {nome_colaborador}!")
+            with st.form("form_registro", clear_on_submit=True):
+                tipo_acao = st.radio("Selecione a ação:", ["Retirada", "Devolução"], horizontal=True)
+                matricula = st.text_input("Matrícula do Colaborador").strip()
+                codigo_tel = st.text_input("Código do Telefone (ex: TEL-01)").strip().upper()
+                
+                submit = st.form_submit_button("Confirmar Operação", type="primary")
+                
+                if submit:
+                    if not matricula or not codigo_tel:
+                        st.warning("⚠️ Preencha a Matrícula e o Código do Telefone.")
+                    elif matricula not in base_colaboradores:
+                        st.error(f"❌ Matrícula '{matricula}' não cadastrada no sistema. Fale com a supervisão.")
+                    else:
+                        nome_colaborador = base_colaboradores[matricula]
+                        registrar_movimentacao(matricula, nome_colaborador, codigo_tel, tipo_acao)
+                        
+                        st.balloons()
+                        st.success(f"✅ **{tipo_acao}** registrada com sucesso!\n- **Colaborador:** {nome_colaborador}\n- **Aparelho:** {codigo_tel}")
 
-    # --- ABA 2: ADMIN / GERADOR DE QR CODE ---
+    # ----------------------------------------------------
+    # ABA 2: PAINEL GERADOR DE QR CODE (Fica aberto em um tablet/monitor na base)
+    # ----------------------------------------------------
     with aba_admin:
-        st.markdown("### Gerar Novo QR Code")
-        st.info("Este QR Code enviará o usuário diretamente para este aplicativo.")
+        st.subheader("📺 Display do QR Code Presencial")
+        st.caption("Deixe esta aba aberta no monitor local da empresa. Atualize o QR Code periodicamente.")
         
-        # Como o Streamlit rodará na web, precisamos da URL real onde ele está hospedado
-        url_app = st.text_input("URL do App (Ex: https://meu-app-telefone.streamlit.app/)", value="https://seusite.com")
+        url_app = st.text_input("URL pública do App", value="https://seu-app.streamlit.app")
         
-        if st.button("Gerar QR Code"):
-            # O timestamp gera a aleatoriedade solicitada no prompt
-            token_aleatorio = datetime.now().strftime("%Y%m%d%H%M%S")
-            qr_bytes = gerar_qr_code(url_app, token_aleatorio)
-            
-            st.image(qr_bytes, caption="Escaneie para acessar o formulário", width=300)
-            st.download_button(
-                label="📥 Baixar QR Code",
-                data=qr_bytes,
-                file_name=f"QR_Retirada_{token_aleatorio}.png",
-                mime="image/png"
-            )
+        if st.button("🔄 Gerar Novo QR Code Agora"):
+            st.rerun()
+
+        # Gera o QR Code com a hora exata deste instante
+        qr_bytes = gerar_imagem_qr(url_app)
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.image(qr_bytes, caption=f"Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos a partir do momento de geração.", width=320)
+        with col2:
+            st.markdown("### Instruções:")
+            st.write("1. Abra a câmera do celular.")
+            st.write("2. Escaneie o QR Code ao lado.")
+            st.write("3. Preencha sua matrícula para retirar/devolver.")
 
 if __name__ == "__main__":
     main()
