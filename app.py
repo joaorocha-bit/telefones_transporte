@@ -23,6 +23,10 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+# Inicializa a sessão administrativa caso não exista
+if "admin_autenticado" not in st.session_state:
+    st.session_state["admin_autenticado"] = False
+
 # ==========================================
 # FUNÇÕES DE AUTENTICAÇÃO E GOOGLE SHEETS
 # ==========================================
@@ -120,12 +124,12 @@ def renderizar_qr_code_auto():
     
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.image(qr_bytes, caption=f"Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos.", width=320)
+        st.image(qr_bytes, caption=f"Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos.", width=340)
     with col2:
         st.markdown("### Instruções:")
         st.write("1. Abra a câmera do celular.")
         st.write("2. Escaneie o QR Code.")
-        st.write("3. Preencha o formulário.")
+        st.write("3. Preencha o formulário para retirar ou devolver.")
 
 # ==========================================
 # INTERFACE DO APP
@@ -133,7 +137,7 @@ def renderizar_qr_code_auto():
 def main():
     st.title("📱 Gestão de Telefones")
     
-    aba_usuario, aba_admin = st.tabs(["📲 Formulário de Operação", "🔒 Painel Físico / Gerador"])
+    aba_usuario, aba_admin = st.tabs(["Formulário de Operação", "Painel Físico / Gerador"])
 
     # ----------------------------------------------------
     # ABA 1: FORMULÁRIO DO COLABORADOR
@@ -180,21 +184,32 @@ def main():
                         st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
 
     # ----------------------------------------------------
-    # ABA 2: PAINEL GERADOR DE QR CODE
+    # ABA 2: PAINEL GERADOR DE QR CODE (PAINEL FÍSICO)
     # ----------------------------------------------------
     with aba_admin:
-        st.subheader("🔒 Acesso Administrativo")
-        senha_digitada = st.text_input("Digite a senha do painel para exibir o QR Code:", type="password")
+        # Se NÃO estiver autenticado: exibe o campo de senha aberto
+        if not st.session_state["admin_autenticado"]:
+            with st.expander("🔑 Acesso Administrativo", expanded=True):
+                senha_input = st.text_input("Digite a senha do painel:", type="password", key="pwd_input")
+                if st.button("Acessar Painel", type="primary"):
+                    if senha_input == ADMIN_PASSWORD:
+                        st.session_state["admin_autenticado"] = True
+                        st.rerun()
+                    else:
+                        st.error("❌ Senha incorreta.")
         
-        if senha_digitada == ADMIN_PASSWORD:
-            st.success("Acesso autorizado.")
-            st.caption(f"📍 **URL de destino:** `{APP_URL}`")
-            
-            # Chama a função fragmentada que se auto-atualiza a cada 60s
-            renderizar_qr_code_auto()
+        # Se JÁ ESTIVER autenticado: recolhe a área administrativa e mostra o display limpo
+        else:
+            with st.expander("⚙️ Configurações do Painel (Clique para recolher/expandir)", expanded=False):
+                st.success("✅ Painel Ativo")
+                st.caption(f"📍 **URL configurada:** `{APP_URL}`")
+                if st.button("🔒 Bloquear Painel / Sair"):
+                    st.session_state["admin_autenticado"] = False
+                    st.rerun()
 
-        elif senha_digitada:
-            st.error("❌ Senha incorreta.")
+            st.markdown("---")
+            # Exibe o display do QR Code de forma limpa na tela
+            renderizar_qr_code_auto()
 
 if __name__ == "__main__":
     main()
