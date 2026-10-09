@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import qrcode
 import pandas as pd
 from datetime import datetime, timezone, timedelta
@@ -16,7 +17,7 @@ st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout=
 APP_URL = st.secrets.get("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
 SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
-TEMPO_EXPIRACAO_MINUTOS = 2
+TEMPO_EXPIRACAO_MINUTOS = 2 
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -25,6 +26,9 @@ SCOPES = [
 
 if "admin_autenticado" not in st.session_state:
     st.session_state["admin_autenticado"] = False
+
+if "modo_kiosk" not in st.session_state:
+    st.session_state["modo_kiosk"] = False
 
 # ==========================================
 # FUNÇÕES DE AUTENTICAÇÃO E GOOGLE SHEETS
@@ -163,7 +167,7 @@ def gerar_imagem_qr(url_base: str) -> bytes:
     
     url_com_token = f"{url_base}?t={timestamp_str}&s={assinatura}"
     
-    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr = qrcode.QRCode(version=1, box_size=12, border=4)
     qr.add_data(url_com_token)
     qr.make(fit=True)
     
@@ -176,23 +180,34 @@ def gerar_imagem_qr(url_base: str) -> bytes:
 # FRAGMENTO DE AUTO-REFRESH DO QR CODE
 # ==========================================
 @st.fragment(run_every="60s")
-def renderizar_qr_code_auto():
+def renderizar_qr_code_auto(kiosk_mode: bool = False):
     qr_bytes = gerar_imagem_qr(APP_URL)
     
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.image(qr_bytes, caption=f"Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos.", width=340)
-    with col2:
-        st.markdown("### Instruções:")
-        st.write("1. Abra a câmera do celular.")
-        st.write("2. Escaneie o QR Code.")
-        st.write("3. Preencha o formulário para retirar ou devolver.")
+    if kiosk_mode:
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min", use_container_width=True)
+        with col2:
+            st.markdown("## 📱 Instruções de Retirada / Devolução:")
+            st.markdown("### 1. Abra a câmera do seu celular.")
+            st.markdown("### 2. Escaneie o QR Code.")
+            st.markdown("### 3. Informe sua matrícula e código do telefone.")
+            st.markdown("---")
+            st.info("A validação é feita em tempo real e registrada no sistema.")
+    else:
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente. Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos.", width=340)
+        with col2:
+            st.markdown("### 📱 Instruções de Retirada / Devolução:")
+            st.write("1. Abra a câmera do celular.")
+            st.write("2. Escaneie o QR Code.")
+            st.write("3. Informe sua matrícula e código do telefone.")
 
 # ==========================================
-# COMPONENTE DE AUTENTICAÇÃO ADMINISTRATIVA (CHAVES ÚNICAS)
+# COMPONENTE DE AUTENTICAÇÃO ADMINISTRATIVA
 # ==========================================
 def verificar_login_admin(key_suffix: str = "default") -> bool:
-    """Gerencia a autenticação das abas restritas usando chaves dinâmicas."""
     if not st.session_state["admin_autenticado"]:
         with st.expander("🔑 Acesso Administrativo Requerido", expanded=True):
             senha_input = st.text_input("Digite a senha do painel:", type="password", key=f"pwd_{key_suffix}")
@@ -215,6 +230,47 @@ def verificar_login_admin(key_suffix: str = "default") -> bool:
 # INTERFACE DO APP
 # ==========================================
 def main():
+    # ----------------------------------------------------
+    # MODO TELA CHEIA (KIOSK)
+    # ----------------------------------------------------
+    if st.session_state.get("modo_kiosk", False):
+        # Oculta menus, abas e padding padrão do Streamlit
+        st.markdown("""
+            <style>
+                header {visibility: hidden !important;}
+                footer {visibility: hidden !important;}
+                .stTabs {display: none !important;}
+                .block-container {padding-top: 1.5rem !important; padding-bottom: 0rem !important; max-width: 95% !important;}
+                h1 {display: none !important;}
+            </style>
+        """, unsafe_allow_html=True)
+        
+        # Tenta acionar Fullscreen nativo do navegador via JavaScript
+        components.html("""
+            <script>
+                var elem = window.parent.document.documentElement;
+                if (!window.parent.document.fullscreenElement) {
+                    if (elem.requestFullscreen) { elem.requestFullscreen(); }
+                    else if (elem.webkitRequestFullscreen) { elem.webkitRequestFullscreen(); }
+                }
+            </script>
+        """, height=0)
+
+        col_top, col_btn = st.columns([4, 1])
+        with col_top:
+            st.title("📱 Painel de Retirada de Telefones")
+        with col_btn:
+            if st.button("❌ Sair da Tela Cheia", type="secondary", use_container_width=True):
+                st.session_state["modo_kiosk"] = False
+                st.rerun()
+
+        st.markdown("---")
+        renderizar_qr_code_auto(kiosk_mode=True)
+        return
+
+    # ----------------------------------------------------
+    # MODO NORMALE (ABAS)
+    # ----------------------------------------------------
     st.title("📱 Gestão de Telefones")
     
     aba_usuario, aba_admin, aba_status = st.tabs([
@@ -223,9 +279,7 @@ def main():
         "Status dos Telefones"
     ])
 
-    # ----------------------------------------------------
-    # ABA 1: FORMULÁRIO DO COLABORADOR
-    # ----------------------------------------------------
+    # --- ABA 1: FORMULÁRIO DO COLABORADOR ---
     with aba_usuario:
         params = st.query_params
         t_param = params.get("t")
@@ -267,17 +321,21 @@ def main():
                         st.success(f"✅ **{tipo_acao}** registrada com sucesso!\n- **Colaborador:** {nome_colaborador}\n- **Aparelho:** {codigo_tel}")
                         st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
 
-    # ----------------------------------------------------
-    # ABA 2: PAINEL GERADOR DE QR CODE
-    # ----------------------------------------------------
+    # --- ABA 2: PAINEL GERADOR DE QR CODE ---
     with aba_admin:
         if verificar_login_admin(key_suffix="qr_code_tab"):
             st.markdown("---")
-            renderizar_qr_code_auto()
+            
+            c_btn1, _ = st.columns([1, 2])
+            with c_btn1:
+                if st.button("Entrar em Modo Tela Cheia.", use_container_width=True, type="primary"):
+                    st.session_state["modo_kiosk"] = True
+                    st.rerun()
 
-    # ----------------------------------------------------
-    # ABA 3: STATUS DOS TELEFONES
-    # ----------------------------------------------------
+            st.markdown("---")
+            renderizar_qr_code_auto(kiosk_mode=False)
+
+    # --- ABA 3: STATUS DOS TELEFONES ---
     with aba_status:
         if verificar_login_admin(key_suffix="status_tab"):
             st.subheader("📋 Inventário e Status dos Telefones")
