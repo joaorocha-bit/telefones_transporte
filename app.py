@@ -16,7 +16,7 @@ st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout=
 APP_URL = st.secrets.get("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
 SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
-TEMPO_EXPIRACAO_MINUTOS = 3 
+TEMPO_EXPIRACAO_MINUTOS = 1
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
