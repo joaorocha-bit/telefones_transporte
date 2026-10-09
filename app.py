@@ -61,7 +61,7 @@ def carregar_base_colaboradores() -> dict:
 def registrar_movimentacao(matricula: str, nome: str, telefone_id: str, acao: str):
     sheet = obter_aba_planilha("Historico")
     fuso_br = timezone(timedelta(hours=-3))
-    timestamp_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    timestamp_atual = datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M:%S")
     nova_linha = [timestamp_atual, matricula, nome, telefone_id, acao]
     sheet.append_row(nova_linha)
 
