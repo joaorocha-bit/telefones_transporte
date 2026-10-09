@@ -13,9 +13,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout="centered")
 
-# URL fixa do aplicativo
 APP_URL = st.secrets.get("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
-
 SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
 TEMPO_EXPIRACAO_MINUTOS = 3 
@@ -97,7 +95,6 @@ def validar_token(t_param: str, s_param: str) -> tuple[bool, str]:
     return True, "Token Válido"
 
 def gerar_imagem_qr(url_base: str) -> bytes:
-    # Remove a barra no final caso exista para evitar url com barras duplas
     url_base = url_base.rstrip('/')
     timestamp_str = str(int(datetime.now(timezone.utc).timestamp()))
     assinatura = gerar_assinatura(timestamp_str)
@@ -112,6 +109,23 @@ def gerar_imagem_qr(url_base: str) -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+# ==========================================
+# FRAGMENTO DE AUTO-REFRESH DO QR CODE
+# ==========================================
+@st.fragment(run_every="60s")
+def renderizar_qr_code_auto():
+    """Esta função roda sozinha a cada 60 segundos no navegador sem recarregar a página toda."""
+    qr_bytes = gerar_imagem_qr(APP_URL)
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente. Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos.", width=320)
+    with col2:
+        st.markdown("### Instruções:")
+        st.write("1. Abra a câmera do celular.")
+        st.write("2. Escaneie o QR Code.")
+        st.write("3. Preencha o formulário.")
 
 # ==========================================
 # INTERFACE DO APP
@@ -147,7 +161,6 @@ def main():
                 submit = st.form_submit_button("Confirmar Operação", type="primary")
                 
                 if submit:
-                    # Revalida o tempo EXATAMENTE no momento do clique no botão
                     re_valido, re_msg = validar_token(t_param, s_param)
                     
                     if not re_valido:
@@ -160,7 +173,6 @@ def main():
                         nome_colaborador = base_colaboradores[matricula]
                         registrar_movimentacao(matricula, nome_colaborador, codigo_tel, tipo_acao)
                         
-                        # Queima o token limpando os parâmetros da URL para evitar reutilização
                         st.query_params.clear()
                         
                         st.balloons()
@@ -168,7 +180,7 @@ def main():
                         st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
 
     # ----------------------------------------------------
-    # ABA 2: PAINEL GERADOR DE QR CODE (PROTEGIDO POR SENHA)
+    # ABA 2: PAINEL GERADOR DE QR CODE
     # ----------------------------------------------------
     with aba_admin:
         st.subheader("🔒 Acesso Administrativo")
@@ -176,25 +188,11 @@ def main():
         
         if senha_digitada == ADMIN_PASSWORD:
             st.success("Acesso autorizado.")
-            st.caption("Deixe esta tela aberta no monitor da base física.")
-            
-            # Mostra a URL configurada apenas para conferência
             st.caption(f"📍 **URL de destino:** `{APP_URL}`")
             
-            if st.button("🔄 Gerar Novo QR Code Agora"):
-                st.rerun()
+            # Chama a função fragmentada que se auto-atualiza a cada 60s
+            renderizar_qr_code_auto()
 
-            # Gera o QR Code utilizando a URL fixa
-            qr_bytes = gerar_imagem_qr(APP_URL)
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.image(qr_bytes, caption=f"Válido por {TEMPO_EXPIRACAO_MINUTOS} minutos.", width=320)
-            with col2:
-                st.markdown("### Instruções:")
-                st.write("1. Abra a câmera do celular.")
-                st.write("2. Escaneie o QR Code.")
-                st.write("3. Preencha o formulário.")
         elif senha_digitada:
             st.error("❌ Senha incorreta.")
 
