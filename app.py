@@ -1,7 +1,7 @@
 import streamlit as st
 import qrcode
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import io
 import hmac
 import hashlib
@@ -60,6 +60,7 @@ def carregar_base_colaboradores() -> dict:
 
 def registrar_movimentacao(matricula: str, nome: str, telefone_id: str, acao: str):
     sheet = obter_aba_planilha("Historico")
+    fuso_br = timezone(timedelta(hours=-3))
     timestamp_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     nova_linha = [timestamp_atual, matricula, nome, telefone_id, acao]
     sheet.append_row(nova_linha)
