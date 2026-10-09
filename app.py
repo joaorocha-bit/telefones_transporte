@@ -16,7 +16,7 @@ st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout=
 APP_URL = st.secrets.get("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
 SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
-TEMPO_EXPIRACAO_MINUTOS = 1 
+TEMPO_EXPIRACAO_MINUTOS = 1
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -65,7 +65,6 @@ def registrar_movimentacao(matricula: str, nome: str, telefone_id: str, acao: st
     sheet.append_row(nova_linha)
 
 def carregar_status_telefones() -> pd.DataFrame:
-    """Busca a lista master de telefones e cruza com a aba Historico para calcular o status atual."""
     try:
         sheet_telefones = obter_aba_planilha("Controle_Telefone")
         sheet_historico = obter_aba_planilha("Historico")
@@ -76,7 +75,6 @@ def carregar_status_telefones() -> pd.DataFrame:
         if df_telefones.empty or "Codigo_Telefone" not in df_telefones.columns:
             return pd.DataFrame()
         
-        # Padroniza os códigos de telefone para evitar falhas por espaços/caixa alta
         df_telefones["Codigo_Telefone"] = df_telefones["Codigo_Telefone"].astype(str).str.strip().str.upper()
         
         status_lista = []
@@ -85,11 +83,9 @@ def carregar_status_telefones() -> pd.DataFrame:
             df_historico["Codigo_Telefone"] = df_historico["Codigo_Telefone"].astype(str).str.strip().str.upper()
             
             for cod in df_telefones["Codigo_Telefone"]:
-                # Filtra todas as movimentações do aparelho específico
                 movs = df_historico[df_historico["Codigo_Telefone"] == cod]
                 
                 if not movs.empty:
-                    # Pega a última linha registrada para esse telefone
                     ultima_mov = movs.iloc[-1]
                     acao = str(ultima_mov.get("Acao", "")).strip()
                     nome = str(ultima_mov.get("Nome", "")).strip()
@@ -193,14 +189,14 @@ def renderizar_qr_code_auto():
         st.write("3. Preencha o formulário para retirar ou devolver.")
 
 # ==========================================
-# COMPONENTE DE AUTENTICAÇÃO ADMINISTRATIVA
+# COMPONENTE DE AUTENTICAÇÃO ADMINISTRATIVA (CHAVES ÚNICAS)
 # ==========================================
-def verificar_login_admin() -> bool:
-    """Gerencia a autenticação das abas restritas."""
+def verificar_login_admin(key_suffix: str = "default") -> bool:
+    """Gerencia a autenticação das abas restritas usando chaves dinâmicas."""
     if not st.session_state["admin_autenticado"]:
         with st.expander("🔑 Acesso Administrativo Requerido", expanded=True):
-            senha_input = st.text_input("Digite a senha do painel:", type="password", key="pwd_admin_global")
-            if st.button("Acessar", type="primary", key="btn_login_global"):
+            senha_input = st.text_input("Digite a senha do painel:", type="password", key=f"pwd_{key_suffix}")
+            if st.button("Acessar", type="primary", key=f"btn_login_{key_suffix}"):
                 if senha_input == ADMIN_PASSWORD:
                     st.session_state["admin_autenticado"] = True
                     st.rerun()
@@ -210,7 +206,7 @@ def verificar_login_admin() -> bool:
     else:
         with st.expander("⚙️ Sessão Administrativa Ativa (Clique para fechar/sair)", expanded=False):
             st.success("✅ Você está autenticado como Administrador.")
-            if st.button("🔒 Bloquear Painel / Sair", key="btn_logout"):
+            if st.button("🔒 Bloquear Painel / Sair", key=f"btn_logout_{key_suffix}"):
                 st.session_state["admin_autenticado"] = False
                 st.rerun()
         return True
@@ -275,30 +271,28 @@ def main():
     # ABA 2: PAINEL GERADOR DE QR CODE
     # ----------------------------------------------------
     with aba_admin:
-        if verificar_login_admin():
+        if verificar_login_admin(key_suffix="qr_code_tab"):
             st.markdown("---")
             renderizar_qr_code_auto()
 
     # ----------------------------------------------------
-    # ABA 3: STATUS DOS TELEFONES (ESTOQUE/DISPONIBILIDADE)
+    # ABA 3: STATUS DOS TELEFONES
     # ----------------------------------------------------
     with aba_status:
-        if verificar_login_admin():
+        if verificar_login_admin(key_suffix="status_tab"):
             st.subheader("📋 Inventário e Status dos Telefones")
             
             col_ref, _ = st.columns([1, 3])
             with col_ref:
-                if st.button("🔄 Atualizar Dados", use_container_width=True):
+                if st.button("🔄 Atualizar Dados", use_container_width=True, key="btn_refresh_status"):
                     st.rerun()
 
-            # Carrega e processa os dados do Google Sheets
             with st.spinner("Consultando dados da planilha..."):
                 df_status = carregar_status_telefones()
 
             if df_status.empty:
                 st.warning("⚠️ Nenhum telefone encontrado na aba 'Controle_Telefone' ou erro na leitura.")
             else:
-                # Métricas Rápidas no Topo
                 total_tels = len(df_status)
                 em_uso = len(df_status[df_status["Status"] == "🔴 Em Uso"])
                 disponiveis = len(df_status[df_status["Status"] == "🟢 Disponível"])
@@ -310,8 +304,7 @@ def main():
                 
                 st.markdown("---")
                 
-                # Campo de Busca
-                busca = st.text_input("🔍 Buscar por Código do Telefone ou Colaborador:").strip().lower()
+                busca = st.text_input("🔍 Buscar por Código do Telefone ou Colaborador:", key="input_busca_tel").strip().lower()
                 
                 if busca:
                     df_exibicao = df_status[
@@ -321,7 +314,6 @@ def main():
                 else:
                     df_exibicao = df_status
 
-                # Exibição em Tabela Formatada
                 st.dataframe(
                     df_exibicao,
                     use_container_width=True,
