@@ -13,8 +13,11 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout="centered")
 
+# URL fixa do aplicativo
+APP_URL = st.secrets.get("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
+
 SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
-ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123") # Senha para acessar o gerador
+ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
 TEMPO_EXPIRACAO_MINUTOS = 3 
 
 SCOPES = [
@@ -94,6 +97,8 @@ def validar_token(t_param: str, s_param: str) -> tuple[bool, str]:
     return True, "Token Válido"
 
 def gerar_imagem_qr(url_base: str) -> bytes:
+    # Remove a barra no final caso exista para evitar url com barras duplas
+    url_base = url_base.rstrip('/')
     timestamp_str = str(int(datetime.now(timezone.utc).timestamp()))
     assinatura = gerar_assinatura(timestamp_str)
     
@@ -173,12 +178,14 @@ def main():
             st.success("Acesso autorizado.")
             st.caption("Deixe esta tela aberta no monitor da base física.")
             
-            url_app = st.text_input("URL pública do App", value="https://seu-app.streamlit.app")
+            # Mostra a URL configurada apenas para conferência
+            st.caption(f"📍 **URL de destino:** `{APP_URL}`")
             
-            if st.button("🔄 Atualizar QR Code Agora"):
+            if st.button("🔄 Gerar Novo QR Code Agora"):
                 st.rerun()
 
-            qr_bytes = gerar_imagem_qr(url_app)
+            # Gera o QR Code utilizando a URL fixa
+            qr_bytes = gerar_imagem_qr(APP_URL)
             
             col1, col2 = st.columns([2, 1])
             with col1:
