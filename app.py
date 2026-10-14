@@ -337,8 +337,8 @@ def main():
             
             with st.form("form_registro"):
                 tipo_acao = st.radio("Selecione a ação:", ["Retirada", "Devolução"], horizontal=True)
-                matricula = st.text_input("Matrícula do Colaborador").strip()
-                codigo_tel = st.text_input("Código do Telefone (ex: TEL-01)").strip().upper()
+                matricula = st.text_input("Matrícula do Colaborador (Somente números).").strip()
+                codigo_tel = st.text_input("Código do Telefone.").strip().upper()
                 
                 submit = st.form_submit_button("Confirmar Operação", type="primary")
                 
