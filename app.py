@@ -315,8 +315,7 @@ def main():
     
     aba_usuario, aba_admin, aba_status = st.tabs([
         "Formulário de Operação", 
-        "Painel Físico / Gerador", 
-        "Status dos Telefones"
+        "Painel Físico / Gerador"
     ])
 
     # --- ABA 1: FORMULÁRIO DO COLABORADOR ---
