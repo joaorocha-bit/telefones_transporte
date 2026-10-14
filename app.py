@@ -385,48 +385,5 @@ def main():
             st.markdown("---")
             renderizar_qr_code_auto(kiosk_mode=False)
 
-    # --- ABA 3: STATUS DOS TELEFONES ---
-    with aba_status:
-        if verificar_login_admin(key_suffix="status_tab"):
-            st.subheader("Inventário e Status dos Telefones")
-            
-            col_ref, _ = st.columns([1, 3])
-            with col_ref:
-                if st.button("🔄 Atualizar Dados", use_container_width=True, key="btn_refresh_status"):
-                    st.rerun()
-
-            with st.spinner("Consultando dados da planilha..."):
-                df_status = carregar_status_telefones()
-
-            if df_status.empty:
-                st.warning("⚠️ Nenhum telefone encontrado na aba 'Controle_Telefone' ou erro na leitura.")
-            else:
-                total_tels = len(df_status)
-                em_uso = len(df_status[df_status["Status"] == "🔴 Em Uso"])
-                disponiveis = len(df_status[df_status["Status"] == "🟢 Disponível"])
-                
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Total Cadastrado", total_tels)
-                m2.metric("🔴 Em Uso", em_uso)
-                m3.metric("🟢 Disponíveis", disponiveis)
-                
-                st.markdown("---")
-                
-                busca = st.text_input("🔍 Buscar por Código do Telefone ou Colaborador:", key="input_busca_tel").strip().lower()
-                
-                if busca:
-                    df_exibicao = df_status[
-                        df_status["Código Telefone"].str.lower().str.contains(busca) |
-                        df_status["Responsável Atual"].str.lower().str.contains(busca)
-                    ]
-                else:
-                    df_exibicao = df_status
-
-                st.dataframe(
-                    df_exibicao,
-                    use_container_width=True,
-                    hide_index=True
-                )
-
 if __name__ == "__main__":
     main()
