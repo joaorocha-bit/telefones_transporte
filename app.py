@@ -261,18 +261,16 @@ def gerar_imagem_qr(url_base: str) -> bytes:
 # ==========================================
 @st.fragment(run_every="60s")
 def renderizar_painel_base(kiosk_mode: bool = False):
-    col_qr, col_status = st.columns([1, 1.2])
+    col_qr, col_status = st.columns([1, 1.1])
     
     # --- COLUNA DA ESQUERDA: QR CODE ---
     with col_qr:
-        st.subheader("📱 QR Code para Retirada e Devolução")
+        st.subheader("📱 QR Code para Retirada / Devolução")
         qr_bytes = gerar_imagem_qr(APP_URL)
-        st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min.", width=300 if not kiosk_mode else 350)
+        st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min.", width=280 if not kiosk_mode else 320)
         
-        st.markdown("### Instruções para o Colaborador:")
-        st.markdown("1. Abra a câmera do seu celular;")
-        st.markdown("2. Escaneie o QR Code acima;")
-        st.markdown("3. Informe sua matrícula e código do telefone.")
+        st.markdown("**Instruções:**")
+        st.markdown("1. Abra a câmera do seu celular  \n2. Escaneie o QR Code acima  \n3. Informe sua matrícula e código do telefone")
         
         if not kiosk_mode:
             st.markdown("---")
@@ -289,18 +287,15 @@ def renderizar_painel_base(kiosk_mode: bool = False):
         if df_status.empty:
             st.warning("⚠️ Nenhum telefone encontrado na aba 'Controle_Telefone' ou erro na leitura.")
         else:
-            # Calcula altura exata para caber na tela sem barras de rolagem desnecessárias
-            altura_tabela = max(150, (len(df_status) + 1) * 35 + 20)
-            
+            # Quadro fixo em 380px com rolagem interna automática para alinhar ao QR Code
             st.dataframe(
                 df_status,
                 use_container_width=True,
                 hide_index=True,
-                height=altura_tabela
+                height=380
             )
             
             # --- SEÇÃO ADMINISTRATIVA: DEVOLUÇÃO POR ESQUECIMENTO ---
-            st.markdown("---")
             with st.expander("🛠️ Marcar Devolução por Esquecimento (Requer Senha)"):
                 st.write("Selecione os aparelhos que não foram devolvidos ao fim do turno para registrar a devolução com 'Esquecimento'.")
                 
@@ -345,7 +340,7 @@ def main():
                 header {visibility: hidden !important;}
                 footer {visibility: hidden !important;}
                 .stTabs {display: none !important;}
-                .block-container {padding-top: 0.8rem !important; padding-bottom: 0rem !important; max-width: 98% !important;}
+                .block-container {padding-top: 0.5rem !important; padding-bottom: 0rem !important; max-width: 98% !important;}
                 h1 {display: none !important;}
             </style>
         """, unsafe_allow_html=True)
