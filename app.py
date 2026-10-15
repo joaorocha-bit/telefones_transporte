@@ -24,6 +24,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+if "admin_autenticado" not in st.session_state:
+    st.session_state["admin_autenticado"] = False
+
 if "modo_kiosk" not in st.session_state:
     st.session_state["modo_kiosk"] = False
 
@@ -47,6 +50,7 @@ def obter_aba_planilha(nome_aba: str):
         return client.open_by_key(sheet_id).worksheet(nome_aba)
     return None
 
+@st.cache_data(ttl=600)
 def carregar_base_colaboradores() -> dict:
     try:
         sheet = obter_aba_planilha("Colaboradores")
@@ -64,12 +68,10 @@ def registrar_movimentacao(matricula: str, nome: str, telefone_id: str, acao: st
     timestamp_atual = datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M:%S")
     nova_linha = [timestamp_atual, matricula, nome, telefone_id, acao]
     sheet.append_row(nova_linha)
+    
+    st.cache_data.clear()
 
 def consultar_status_telefone_especifico(codigo_tel: str) -> tuple[str, str, bool]:
-    """
-    Retorna: (status_atual, responsavel_atual, existe_no_cadastro)
-    status_atual pode ser 'Em Uso' ou 'Disponível'
-    """
     try:
         sheet_telefones = obter_aba_planilha("Controle_Telefone")
         sheet_historico = obter_aba_planilha("Historico")
@@ -82,7 +84,6 @@ def consultar_status_telefone_especifico(codigo_tel: str) -> tuple[str, str, boo
         df_telefones["Codigo_Telefone"] = df_telefones["Codigo_Telefone"].astype(str).str.strip().str.upper()
         codigo_tel_upper = codigo_tel.strip().upper()
         
-        # Verifica se o aparelho existe na aba Controle_Telefone
         if codigo_tel_upper not in df_telefones["Codigo_Telefone"].values:
             return "Não Encontrado", "", False
         
@@ -107,6 +108,7 @@ def consultar_status_telefone_especifico(codigo_tel: str) -> tuple[str, str, boo
         st.error(f"Erro ao verificar status do telefone: {e}")
         return "Erro", "", False
 
+@st.cache_data(ttl=15)
 def carregar_status_telefones() -> pd.DataFrame:
     try:
         sheet_telefones = obter_aba_planilha("Controle_Telefone")
@@ -166,10 +168,6 @@ def carregar_status_telefones() -> pd.DataFrame:
         return pd.DataFrame()
 
 def registrar_devolucao_esquecimento(codigos_telefones: list) -> list:
-    """
-    Recupera o último registro no histórico para cada telefone selecionado e
-    grava uma nova linha de Devolução com a Matrícula e Nome do último usuário + ' (Esquecimento)'.
-    """
     sheet_historico = obter_aba_planilha("Historico")
     df_historico = pd.DataFrame(sheet_historico.get_all_records())
     
@@ -207,7 +205,7 @@ def registrar_devolucao_esquecimento(codigos_telefones: list) -> list:
     return processados
 
 # ==========================================
-# FUNÇÕES DE VALIDAÇÃO DO QR CODE
+# FUNÇÕES DE VALIDAÇÃO DO QR CODE E ADMIN
 # ==========================================
 def gerar_assinatura(timestamp_str: str) -> str:
     return hmac.new(
@@ -256,6 +254,25 @@ def gerar_imagem_qr(url_base: str) -> bytes:
     img.save(buf, format="PNG")
     return buf.getvalue()
 
+def verificar_login_admin(key_suffix: str = "default") -> bool:
+    if not st.session_state.get("admin_autenticado", False):
+        with st.expander("🔑 Acesso Administrativo Requerido", expanded=True):
+            senha_input = st.text_input("Digite a senha do painel:", type="password", key=f"pwd_{key_suffix}")
+            if st.button("Acessar Painel", type="primary", key=f"btn_login_{key_suffix}"):
+                if senha_input == ADMIN_PASSWORD:
+                    st.session_state["admin_autenticado"] = True
+                    st.rerun()
+                else:
+                    st.error("❌ Senha incorreta.")
+        return False
+    else:
+        with st.expander("⚙️ Sessão Administrativa Ativa (Clique para fechar/sair)", expanded=False):
+            st.success("✅ Você está autenticado como Administrador.")
+            if st.button("🔒 Bloquear Painel / Sair", key=f"btn_logout_{key_suffix}"):
+                st.session_state["admin_autenticado"] = False
+                st.rerun()
+        return True
+
 # ==========================================
 # PAINEL DA BASE (QR CODE + STATUS DOS TELEFONES)
 # ==========================================
@@ -287,7 +304,6 @@ def renderizar_painel_base(kiosk_mode: bool = False):
         if df_status.empty:
             st.warning("⚠️ Nenhum telefone encontrado na aba 'Controle_Telefone' ou erro na leitura.")
         else:
-            # Quadro fixo em 380px com rolagem interna automática para alinhar ao QR Code
             st.dataframe(
                 df_status,
                 use_container_width=True,
@@ -296,7 +312,7 @@ def renderizar_painel_base(kiosk_mode: bool = False):
             )
             
             # --- SEÇÃO ADMINISTRATIVA: DEVOLUÇÃO POR ESQUECIMENTO ---
-            with st.expander("🛠️ Marcar Devolução por Esquecimento (Requer Senha)"):
+            with st.expander("🛠️ Marcar Devolução por Esquecimento"):
                 st.write("Selecione os aparelhos que não foram devolvidos ao fim do turno para registrar a devolução com 'Esquecimento'.")
                 
                 telefones_em_uso = df_status[df_status["Status"] == "🔴 Em Uso"]["Código Telefone"].tolist()
@@ -310,13 +326,9 @@ def renderizar_painel_base(kiosk_mode: bool = False):
                         key="select_esquecimento"
                     )
                     
-                    senha_confirmacao = st.text_input("Digite a senha de confirmação:", type="password", key="pwd_esquecimento")
-                    
                     if st.button("Confirmar Devolução por Esquecimento", type="primary"):
                         if not selecionados:
                             st.warning("⚠️ Selecione pelo menos um telefone.")
-                        elif senha_confirmacao != ADMIN_PASSWORD:
-                            st.error("❌ Senha de confirmação incorreta.")
                         else:
                             with st.spinner("Registrando devoluções no histórico..."):
                                 processados = registrar_devolucao_esquecimento(selecionados)
@@ -331,9 +343,6 @@ def renderizar_painel_base(kiosk_mode: bool = False):
 # INTERFACE PRINCIPAL DO APP
 # ==========================================
 def main():
-    # ----------------------------------------------------
-    # MODO TELA CHEIA
-    # ----------------------------------------------------
     if st.session_state.get("modo_kiosk", False):
         st.markdown("""
             <style>
@@ -367,9 +376,6 @@ def main():
         renderizar_painel_base(kiosk_mode=True)
         return
 
-    # ----------------------------------------------------
-    # MODO NORMAL (ABAS)
-    # ----------------------------------------------------
     st.title("Gestão de Telefones")
     
     aba_usuario, aba_base = st.tabs([
@@ -377,7 +383,6 @@ def main():
         "Painel Base (QR Code & Status)"
     ])
 
-    # --- ABA 1: FORMULÁRIO DO COLABORADOR ---
     with aba_usuario:
         params = st.query_params
         t_param = params.get("t")
@@ -428,9 +433,9 @@ def main():
                             st.success(f"✅ **{tipo_acao}** registrada com sucesso!\n- **Colaborador:** {nome_colaborador}\n- **Aparelho:** {codigo_tel}")
                             st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
 
-    # --- ABA 2: PAINEL BASE (QR CODE + STATUS DOS TELEFONES) ---
     with aba_base:
-        renderizar_painel_base(kiosk_mode=False)
+        if verificar_login_admin(key_suffix="painel_base"):
+            renderizar_painel_base(kiosk_mode=False)
 
 if __name__ == "__main__":
     main()
