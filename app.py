@@ -187,7 +187,6 @@ def registrar_devolucao_esquecimento(codigos_telefones: list) -> list:
                 matricula = str(ultima_mov.get("Matricula", "")).strip()
                 nome_orig = str(ultima_mov.get("Nome", "")).strip()
                 
-                # Evita duplicar a palavra Esquecimento se já tiver
                 nome_limpo = nome_orig.replace("(Esquecimento)", "").strip()
                 nome_final = f"{nome_limpo} (Esquecimento)"
                 
@@ -268,7 +267,7 @@ def renderizar_painel_base(kiosk_mode: bool = False):
     with col_qr:
         st.subheader("📱 QR Code para Retirada e Devolução")
         qr_bytes = gerar_imagem_qr(APP_URL)
-        st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min.", width=320 if not kiosk_mode else 380)
+        st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min.", width=300 if not kiosk_mode else 350)
         
         st.markdown("### Instruções para o Colaborador:")
         st.markdown("1. Abra a câmera do seu celular;")
@@ -277,32 +276,27 @@ def renderizar_painel_base(kiosk_mode: bool = False):
         
         if not kiosk_mode:
             st.markdown("---")
-            if st.button("🖥️ Entrar em Modo Tela Cheia (Kiosk)", type="secondary", use_container_width=True):
+            if st.button("Entrar em Modo Tela Cheia", type="secondary", use_container_width=True):
                 st.session_state["modo_kiosk"] = True
                 st.rerun()
 
     # --- COLUNA DA DIREITA: STATUS DOS TELEFONES ---
     with col_status:
-        st.subheader("📋 Status dos Telefones na Base")
+        st.subheader("📋 Status dos Telefones")
         
         df_status = carregar_status_telefones()
         
         if df_status.empty:
             st.warning("⚠️ Nenhum telefone encontrado na aba 'Controle_Telefone' ou erro na leitura.")
         else:
-            total_tels = len(df_status)
-            em_uso = len(df_status[df_status["Status"] == "🔴 Em Uso"])
-            disponiveis = len(df_status[df_status["Status"] == "🟢 Disponível"])
-            
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total Cadastrado", total_tels)
-            m2.metric("🔴 Em Uso", em_uso)
-            m3.metric("🟢 Disponíveis", disponiveis)
+            # Calcula altura exata para caber na tela sem barras de rolagem desnecessárias
+            altura_tabela = max(150, (len(df_status) + 1) * 35 + 20)
             
             st.dataframe(
                 df_status,
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                height=altura_tabela
             )
             
             # --- SEÇÃO ADMINISTRATIVA: DEVOLUÇÃO POR ESQUECIMENTO ---
@@ -343,7 +337,7 @@ def renderizar_painel_base(kiosk_mode: bool = False):
 # ==========================================
 def main():
     # ----------------------------------------------------
-    # MODO TELA CHEIA (KIOSK)
+    # MODO TELA CHEIA
     # ----------------------------------------------------
     if st.session_state.get("modo_kiosk", False):
         st.markdown("""
@@ -351,7 +345,7 @@ def main():
                 header {visibility: hidden !important;}
                 footer {visibility: hidden !important;}
                 .stTabs {display: none !important;}
-                .block-container {padding-top: 1rem !important; padding-bottom: 0rem !important; max-width: 98% !important;}
+                .block-container {padding-top: 0.8rem !important; padding-bottom: 0rem !important; max-width: 98% !important;}
                 h1 {display: none !important;}
             </style>
         """, unsafe_allow_html=True)
@@ -370,7 +364,7 @@ def main():
         with col_top:
             st.title("Painel da Base - QR Code e Status dos Telefones")
         with col_btn:
-            if st.button("❌ Sair da Tela Cheia", type="secondary", use_container_width=True):
+            if st.button("Sair da Tela Cheia", type="secondary", use_container_width=True):
                 st.session_state["modo_kiosk"] = False
                 st.rerun()
 
