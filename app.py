@@ -313,7 +313,7 @@ def main():
     # ----------------------------------------------------
     st.title("Gestão de Telefones")
     
-    aba_usuario, aba_admin = st.tabs([
+    aba_usuario, aba_admin, aba_status = st.tabs([
         "Formulário de Operação", 
         "Painel Físico / Gerador",
         "Status dos Telefones"
