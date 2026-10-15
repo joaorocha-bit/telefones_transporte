@@ -12,7 +12,7 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 # CONFIGURAÇÃO E SEGURANÇA
 # ==========================================
-st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout="centered")
+st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout="wide")
 
 APP_URL = st.secrets.get("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
 SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
@@ -23,9 +23,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
-
-if "admin_autenticado" not in st.session_state:
-    st.session_state["admin_autenticado"] = False
 
 if "modo_kiosk" not in st.session_state:
     st.session_state["modo_kiosk"] = False
@@ -168,6 +165,48 @@ def carregar_status_telefones() -> pd.DataFrame:
         st.error(f"Erro ao processar status dos telefones: {e}")
         return pd.DataFrame()
 
+def registrar_devolucao_esquecimento(codigos_telefones: list) -> list:
+    """
+    Recupera o último registro no histórico para cada telefone selecionado e
+    grava uma nova linha de Devolução com a Matrícula e Nome do último usuário + ' (Esquecimento)'.
+    """
+    sheet_historico = obter_aba_planilha("Historico")
+    df_historico = pd.DataFrame(sheet_historico.get_all_records())
+    
+    processados = []
+    
+    if not df_historico.empty and "Codigo_Telefone" in df_historico.columns:
+        df_historico["Codigo_Telefone"] = df_historico["Codigo_Telefone"].astype(str).str.strip().str.upper()
+        
+        for cod in codigos_telefones:
+            cod_upper = cod.strip().upper()
+            movs = df_historico[df_historico["Codigo_Telefone"] == cod_upper]
+            
+            if not movs.empty:
+                ultima_mov = movs.iloc[-1]
+                matricula = str(ultima_mov.get("Matricula", "")).strip()
+                nome_orig = str(ultima_mov.get("Nome", "")).strip()
+                
+                # Evita duplicar a palavra Esquecimento se já tiver
+                nome_limpo = nome_orig.replace("(Esquecimento)", "").strip()
+                nome_final = f"{nome_limpo} (Esquecimento)"
+                
+                registrar_movimentacao(matricula, nome_final, cod_upper, "Devolução")
+                processados.append({
+                    "codigo": cod_upper,
+                    "matricula": matricula,
+                    "nome": nome_final
+                })
+            else:
+                registrar_movimentacao("0000", "Desconhecido (Esquecimento)", cod_upper, "Devolução")
+                processados.append({
+                    "codigo": cod_upper,
+                    "matricula": "0000",
+                    "nome": "Desconhecido (Esquecimento)"
+                })
+                
+    return processados
+
 # ==========================================
 # FUNÇÕES DE VALIDAÇÃO DO QR CODE
 # ==========================================
@@ -219,57 +258,88 @@ def gerar_imagem_qr(url_base: str) -> bytes:
     return buf.getvalue()
 
 # ==========================================
-# FRAGMENTO DE AUTO-REFRESH DO QR CODE
+# PAINEL DA BASE (QR CODE + STATUS DOS TELEFONES)
 # ==========================================
 @st.fragment(run_every="60s")
-def renderizar_qr_code_auto(kiosk_mode: bool = False):
-    qr_bytes = gerar_imagem_qr(APP_URL)
+def renderizar_painel_base(kiosk_mode: bool = False):
+    col_qr, col_status = st.columns([1, 1.2])
     
-    if kiosk_mode:
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min.", use_container_width=True)
-        with col2:
-            st.markdown("## Instruções de Retirada / Devolução:")
-            st.markdown("### 1. Abra a câmera do celular;")
-            st.markdown("### 2. Escaneie o QR Code;")
-            st.markdown("### 3. Informe sua matrícula e código do telefone.")
+    # --- COLUNA DA ESQUERDA: QR CODE ---
+    with col_qr:
+        st.subheader("📱 QR Code para Retirada e Devolução")
+        qr_bytes = gerar_imagem_qr(APP_URL)
+        st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min.", width=320 if not kiosk_mode else 380)
+        
+        st.markdown("### Instruções para o Colaborador:")
+        st.markdown("1. Abra a câmera do seu celular;")
+        st.markdown("2. Escaneie o QR Code acima;")
+        st.markdown("3. Informe sua matrícula e código do telefone.")
+        
+        if not kiosk_mode:
             st.markdown("---")
-            st.info("💡 A validação é feita em tempo real e registrada no sistema.")
-    else:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min.", width=340)
-        with col2:
-            st.markdown("### Instruções de Retirada / Devolução:")
-            st.write("1. Abra a câmera do celular;")
-            st.write("2. Escaneie o QR Code;")
-            st.write("3. Informe sua matrícula e código do telefone.")
-
-# ==========================================
-# COMPONENTE DE AUTENTICAÇÃO ADMINISTRATIVA
-# ==========================================
-def verificar_login_admin(key_suffix: str = "default") -> bool:
-    if not st.session_state["admin_autenticado"]:
-        with st.expander("🔑 Acesso Administrativo Requerido", expanded=True):
-            senha_input = st.text_input("Digite a senha do painel:", type="password", key=f"pwd_{key_suffix}")
-            if st.button("Acessar", type="primary", key=f"btn_login_{key_suffix}"):
-                if senha_input == ADMIN_PASSWORD:
-                    st.session_state["admin_autenticado"] = True
-                    st.rerun()
-                else:
-                    st.error("❌ Senha incorreta.")
-        return False
-    else:
-        with st.expander("⚙️ Sessão Administrativa Ativa (Clique para fechar/sair)", expanded=False):
-            st.success("✅ Você está autenticado como Administrador.")
-            if st.button("🔒 Bloquear Painel / Sair", key=f"btn_logout_{key_suffix}"):
-                st.session_state["admin_autenticado"] = False
+            if st.button("🖥️ Entrar em Modo Tela Cheia (Kiosk)", type="secondary", use_container_width=True):
+                st.session_state["modo_kiosk"] = True
                 st.rerun()
-        return True
+
+    # --- COLUNA DA DIREITA: STATUS DOS TELEFONES ---
+    with col_status:
+        st.subheader("📋 Status dos Telefones na Base")
+        
+        df_status = carregar_status_telefones()
+        
+        if df_status.empty:
+            st.warning("⚠️ Nenhum telefone encontrado na aba 'Controle_Telefone' ou erro na leitura.")
+        else:
+            total_tels = len(df_status)
+            em_uso = len(df_status[df_status["Status"] == "🔴 Em Uso"])
+            disponiveis = len(df_status[df_status["Status"] == "🟢 Disponível"])
+            
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Cadastrado", total_tels)
+            m2.metric("🔴 Em Uso", em_uso)
+            m3.metric("🟢 Disponíveis", disponiveis)
+            
+            st.dataframe(
+                df_status,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # --- SEÇÃO ADMINISTRATIVA: DEVOLUÇÃO POR ESQUECIMENTO ---
+            st.markdown("---")
+            with st.expander("🛠️ Marcar Devolução por Esquecimento (Requer Senha)"):
+                st.write("Selecione os aparelhos que não foram devolvidos ao fim do turno para registrar a devolução com 'Esquecimento'.")
+                
+                telefones_em_uso = df_status[df_status["Status"] == "🔴 Em Uso"]["Código Telefone"].tolist()
+                
+                if not telefones_em_uso:
+                    st.info("🟢 Nenhum telefone consta em uso no momento.")
+                else:
+                    selecionados = st.multiselect(
+                        "Selecione o(s) telefone(s) para registrar devolução:",
+                        options=telefones_em_uso,
+                        key="select_esquecimento"
+                    )
+                    
+                    senha_confirmacao = st.text_input("Digite a senha de confirmação:", type="password", key="pwd_esquecimento")
+                    
+                    if st.button("Confirmar Devolução por Esquecimento", type="primary"):
+                        if not selecionados:
+                            st.warning("⚠️ Selecione pelo menos um telefone.")
+                        elif senha_confirmacao != ADMIN_PASSWORD:
+                            st.error("❌ Senha de confirmação incorreta.")
+                        else:
+                            with st.spinner("Registrando devoluções no histórico..."):
+                                processados = registrar_devolucao_esquecimento(selecionados)
+                            
+                            st.success(f"✅ Devolução registrada com sucesso para {len(processados)} telefone(s)!")
+                            for p in processados:
+                                st.write(f"• **Telefone:** {p['codigo']} | **Atribuído a:** {p['nome']} (Matrícula: {p['matricula']})")
+                            
+                            st.rerun()
 
 # ==========================================
-# INTERFACE DO APP
+# INTERFACE PRINCIPAL DO APP
 # ==========================================
 def main():
     # ----------------------------------------------------
@@ -281,7 +351,7 @@ def main():
                 header {visibility: hidden !important;}
                 footer {visibility: hidden !important;}
                 .stTabs {display: none !important;}
-                .block-container {padding-top: 1.5rem !important; padding-bottom: 0rem !important; max-width: 95% !important;}
+                .block-container {padding-top: 1rem !important; padding-bottom: 0rem !important; max-width: 98% !important;}
                 h1 {display: none !important;}
             </style>
         """, unsafe_allow_html=True)
@@ -296,16 +366,16 @@ def main():
             </script>
         """, height=0)
 
-        col_top, col_btn = st.columns([4, 1])
+        col_top, col_btn = st.columns([5, 1])
         with col_top:
-            st.title("Painel de Retirada de Telefones")
+            st.title("Painel da Base - QR Code e Status dos Telefones")
         with col_btn:
             if st.button("❌ Sair da Tela Cheia", type="secondary", use_container_width=True):
                 st.session_state["modo_kiosk"] = False
                 st.rerun()
 
         st.markdown("---")
-        renderizar_qr_code_auto(kiosk_mode=True)
+        renderizar_painel_base(kiosk_mode=True)
         return
 
     # ----------------------------------------------------
@@ -313,10 +383,9 @@ def main():
     # ----------------------------------------------------
     st.title("Gestão de Telefones")
     
-    aba_usuario, aba_admin, aba_status = st.tabs([
+    aba_usuario, aba_base = st.tabs([
         "Formulário de Operação", 
-        "Painel Físico / Gerador",
-        "Status dos Telefones"
+        "Painel Base (QR Code & Status)"
     ])
 
     # --- ABA 1: FORMULÁRIO DO COLABORADOR ---
@@ -352,7 +421,6 @@ def main():
                     elif matricula not in base_colaboradores:
                         st.error(f"❌ Matrícula '{matricula}' não encontrada. Verifique com a supervisão.")
                     else:
-                        # Validação de regras de Status (Em Uso vs Disponível)
                         status_atual, responsavel_atual, existe_no_cadastro = consultar_status_telefone_especifico(codigo_tel)
                         
                         if not existe_no_cadastro:
@@ -371,62 +439,9 @@ def main():
                             st.success(f"✅ **{tipo_acao}** registrada com sucesso!\n- **Colaborador:** {nome_colaborador}\n- **Aparelho:** {codigo_tel}")
                             st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
 
-    # --- ABA 2: PAINEL GERADOR DE QR CODE ---
-    with aba_admin:
-        if verificar_login_admin(key_suffix="qr_code_tab"):
-            st.markdown("---")
-            
-            c_btn1, _ = st.columns([1, 2])
-            with c_btn1:
-                if st.button("Entrar em Modo Tela Cheia", use_container_width=True, type="primary"):
-                    st.session_state["modo_kiosk"] = True
-                    st.rerun()
-
-            st.markdown("---")
-            renderizar_qr_code_auto(kiosk_mode=False)
-
-    # --- ABA 3: STATUS DOS TELEFONES ---
-    with aba_status:
-        if verificar_login_admin(key_suffix="status_tab"):
-            st.subheader("📋 Inventário e Status dos Telefones")
-            
-            col_ref, _ = st.columns([1, 3])
-            with col_ref:
-                if st.button("🔄 Atualizar Dados", use_container_width=True, key="btn_refresh_status"):
-                    st.rerun()
-
-            with st.spinner("Consultando dados da planilha..."):
-                df_status = carregar_status_telefones()
-
-            if df_status.empty:
-                st.warning("⚠️ Nenhum telefone encontrado na aba 'Controle_Telefone' ou erro na leitura.")
-            else:
-                total_tels = len(df_status)
-                em_uso = len(df_status[df_status["Status"] == "🔴 Em Uso"])
-                disponiveis = len(df_status[df_status["Status"] == "🟢 Disponível"])
-                
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Total Cadastrado", total_tels)
-                m2.metric("🔴 Em Uso", em_uso)
-                m3.metric("🟢 Disponíveis", disponiveis)
-                
-                st.markdown("---")
-                
-                busca = st.text_input("🔍 Buscar por Código do Telefone ou Colaborador:", key="input_busca_tel").strip().lower()
-                
-                if busca:
-                    df_exibicao = df_status[
-                        df_status["Código Telefone"].str.lower().str.contains(busca) |
-                        df_status["Responsável Atual"].str.lower().str.contains(busca)
-                    ]
-                else:
-                    df_exibicao = df_status
-
-                st.dataframe(
-                    df_exibicao,
-                    use_container_width=True,
-                    hide_index=True
-                )
+    # --- ABA 2: PAINEL BASE (QR CODE + STATUS DOS TELEFONES) ---
+    with aba_base:
+        renderizar_painel_base(kiosk_mode=False)
 
 if __name__ == "__main__":
     main()
