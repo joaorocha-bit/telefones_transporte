@@ -8,15 +8,26 @@ import hmac
 import hashlib
 import gspread
 from google.oauth2.service_account import Credentials
+import os
+import json
+
+# ==========================================
+# FUNÇÃO AUXILIAR DE SEGREDOS (COMPATÍVEL RENDER / STREAMLIT)
+# ==========================================
+def obter_segredo(chave: str, padrao: str = "") -> str:
+    if chave in st.secrets:
+        return st.secrets[chave]
+    return os.environ.get(chave, padrao)
 
 # ==========================================
 # CONFIGURAÇÃO E SEGURANÇA
 # ==========================================
 st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout="wide")
 
-APP_URL = st.secrets.get("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
-SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
-ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
+APP_URL = obter_segredo("APP_URL", "https://seu-app-no-render.onrender.com/")
+SECRET_KEY = obter_segredo("SECRET_KEY", "chave_secreta_super_segura_123")
+ADMIN_PASSWORD = obter_segredo("ADMIN_PASSWORD", "admin123")
+SPREADSHEET_ID = obter_segredo("SPREADSHEET_ID", "")
 TEMPO_EXPIRACAO_MINUTOS = 2 
 
 SCOPES = [
@@ -36,7 +47,15 @@ if "modo_kiosk" not in st.session_state:
 @st.cache_resource
 def conectar_google_sheets():
     try:
-        credentials_dict = dict(st.secrets["gcp_service_account"])
+        # Suporta tanto st.secrets quanto variável de ambiente GCP_SERVICE_ACCOUNT_JSON
+        if "gcp_service_account" in st.secrets:
+            credentials_dict = dict(st.secrets["gcp_service_account"])
+        elif "GCP_SERVICE_ACCOUNT_JSON" in os.environ:
+            credentials_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
+        else:
+            st.error("Credenciais do Google Service Account não encontradas nas variáveis de ambiente.")
+            return None
+
         credentials = Credentials.from_service_account_info(credentials_dict, scopes=SCOPES)
         return gspread.authorize(credentials)
     except Exception as e:
@@ -46,7 +65,10 @@ def conectar_google_sheets():
 def obter_aba_planilha(nome_aba: str):
     client = conectar_google_sheets()
     if client:
-        sheet_id = st.secrets["SPREADSHEET_ID"]
+        sheet_id = SPREADSHEET_ID
+        if not sheet_id:
+            st.error("SPREADSHEET_ID não foi configurado.")
+            return None
         return client.open_by_key(sheet_id).worksheet(nome_aba)
     return None
 
@@ -54,6 +76,8 @@ def obter_aba_planilha(nome_aba: str):
 def carregar_base_colaboradores() -> dict:
     try:
         sheet = obter_aba_planilha("Colaboradores")
+        if not sheet:
+            return {}
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
         df["Matricula"] = df["Matricula"].astype(str).str.strip()
@@ -64,11 +88,12 @@ def carregar_base_colaboradores() -> dict:
 
 def registrar_movimentacao(matricula: str, nome: str, telefone_id: str, acao: str):
     sheet = obter_aba_planilha("Historico")
+    if not sheet:
+        return
     fuso_br = timezone(timedelta(hours=-3))
     timestamp_atual = datetime.now(fuso_br).strftime("%d/%m/%Y %H:%M:%S")
     nova_linha = [timestamp_atual, matricula, nome, telefone_id, acao]
     sheet.append_row(nova_linha)
-    
     st.cache_data.clear()
 
 def consultar_status_telefone_especifico(codigo_tel: str) -> tuple[str, str, bool]:
@@ -76,6 +101,9 @@ def consultar_status_telefone_especifico(codigo_tel: str) -> tuple[str, str, boo
         sheet_telefones = obter_aba_planilha("Controle_Telefone")
         sheet_historico = obter_aba_planilha("Historico")
         
+        if not sheet_telefones or not sheet_historico:
+            return "Erro", "", False
+
         df_telefones = pd.DataFrame(sheet_telefones.get_all_records())
         
         if df_telefones.empty or "Codigo_Telefone" not in df_telefones.columns:
@@ -114,6 +142,9 @@ def carregar_status_telefones() -> pd.DataFrame:
         sheet_telefones = obter_aba_planilha("Controle_Telefone")
         sheet_historico = obter_aba_planilha("Historico")
         
+        if not sheet_telefones or not sheet_historico:
+            return pd.DataFrame()
+
         df_telefones = pd.DataFrame(sheet_telefones.get_all_records())
         df_historico = pd.DataFrame(sheet_historico.get_all_records())
         
@@ -169,6 +200,9 @@ def carregar_status_telefones() -> pd.DataFrame:
 
 def registrar_devolucao_esquecimento(codigos_telefones: list) -> list:
     sheet_historico = obter_aba_planilha("Historico")
+    if not sheet_historico:
+        return []
+
     df_historico = pd.DataFrame(sheet_historico.get_all_records())
     
     processados = []
@@ -287,7 +321,7 @@ def renderizar_painel_base(kiosk_mode: bool = False):
         st.image(qr_bytes, caption=f"🔄 Atualizado automaticamente • Válido por {TEMPO_EXPIRACAO_MINUTOS} min.", width=280 if not kiosk_mode else 320)
         
         st.markdown("**Instruções:**")
-        st.markdown("1. Abra a câmera do seu celular  \n2. Escaneie o QR Code acima  \n3. Informe sua matrícula e código do telefone")
+        st.markdown("1. Abra a câmera do seu celular \n2. Escaneie o QR Code acima \n3. Informe sua matrícula e código do telefone")
         
         if not kiosk_mode:
             st.markdown("---")
@@ -304,138 +338,4 @@ def renderizar_painel_base(kiosk_mode: bool = False):
         if df_status.empty:
             st.warning("⚠️ Nenhum telefone encontrado na aba 'Controle_Telefone' ou erro na leitura.")
         else:
-            st.dataframe(
-                df_status,
-                use_container_width=True,
-                hide_index=True,
-                height=380
-            )
-            
-            # --- SEÇÃO ADMINISTRATIVA: DEVOLUÇÃO POR ESQUECIMENTO ---
-            with st.expander("🛠️ Marcar Devolução por Esquecimento"):
-                st.write("Selecione os aparelhos que não foram devolvidos ao fim do turno para registrar a devolução com 'Esquecimento'.")
-                
-                telefones_em_uso = df_status[df_status["Status"] == "🔴 Em Uso"]["Código Telefone"].tolist()
-                
-                if not telefones_em_uso:
-                    st.info("🟢 Nenhum telefone consta em uso no momento.")
-                else:
-                    selecionados = st.multiselect(
-                        "Selecione o(s) telefone(s) para registrar devolução:",
-                        options=telefones_em_uso,
-                        key="select_esquecimento"
-                    )
-                    
-                    if st.button("Confirmar Devolução por Esquecimento", type="primary"):
-                        if not selecionados:
-                            st.warning("⚠️ Selecione pelo menos um telefone.")
-                        else:
-                            with st.spinner("Registrando devoluções no histórico..."):
-                                processados = registrar_devolucao_esquecimento(selecionados)
-                            
-                            st.success(f"✅ Devolução registrada com sucesso para {len(processados)} telefone(s)!")
-                            for p in processados:
-                                st.write(f"• **Telefone:** {p['codigo']} | **Atribuído a:** {p['nome']} (Matrícula: {p['matricula']})")
-                            
-                            st.rerun()
-
-# ==========================================
-# INTERFACE PRINCIPAL DO APP
-# ==========================================
-def main():
-    if st.session_state.get("modo_kiosk", False):
-        st.markdown("""
-            <style>
-                header {visibility: hidden !important;}
-                footer {visibility: hidden !important;}
-                .stTabs {display: none !important;}
-                .block-container {padding-top: 0.5rem !important; padding-bottom: 0rem !important; max-width: 98% !important;}
-                h1 {display: none !important;}
-            </style>
-        """, unsafe_allow_html=True)
-        
-        components.html("""
-            <script>
-                var elem = window.parent.document.documentElement;
-                if (!window.parent.document.fullscreenElement) {
-                    if (elem.requestFullscreen) { elem.requestFullscreen(); }
-                    else if (elem.webkitRequestFullscreen) { elem.webkitRequestFullscreen(); }
-                }
-            </script>
-        """, height=0)
-
-        col_top, col_btn = st.columns([5, 1])
-        with col_top:
-            st.title("Painel da Base - QR Code e Status dos Telefones")
-        with col_btn:
-            if st.button("Sair da Tela Cheia", type="secondary", use_container_width=True):
-                st.session_state["modo_kiosk"] = False
-                st.rerun()
-
-        st.markdown("---")
-        renderizar_painel_base(kiosk_mode=True)
-        return
-
-    st.title("Gestão de Telefones")
-    
-    aba_usuario, aba_base = st.tabs([
-        "Formulário de Operação", 
-        "Painel Base (QR Code & Status)"
-    ])
-
-    with aba_usuario:
-        params = st.query_params
-        t_param = params.get("t")
-        s_param = params.get("s")
-        
-        token_valido, mensagem_erro = validar_token(t_param, s_param)
-        
-        if not token_valido:
-            st.error(mensagem_erro)
-        else:
-            st.success("🔒 Acesso validado presencialmente.")
-            st.markdown("---")
-            
-            base_colaboradores = carregar_base_colaboradores()
-            
-            with st.form("form_registro"):
-                tipo_acao = st.radio("Selecione a ação:", ["Retirada", "Devolução"], horizontal=True)
-                matricula = st.text_input("Matrícula do Colaborador (Somente números).").strip()
-                codigo_tel = st.text_input("Código do Telefone.").strip().upper()
-                
-                submit = st.form_submit_button("Confirmar Operação", type="primary")
-                
-                if submit:
-                    re_valido, re_msg = validar_token(t_param, s_param)
-                    
-                    if not re_valido:
-                        st.error("⏱️ O tempo do QR Code expirou enquanto você preenchia. Escaneie novamente na base.")
-                    elif not matricula or not codigo_tel:
-                        st.warning("⚠️ Preencha a Matrícula e o Código do Telefone.")
-                    elif matricula not in base_colaboradores:
-                        st.error(f"❌ Matrícula '{matricula}' não encontrada. Verifique com a supervisão.")
-                    else:
-                        status_atual, responsavel_atual, existe_no_cadastro = consultar_status_telefone_especifico(codigo_tel)
-                        
-                        if not existe_no_cadastro:
-                            st.error(f"❌ O código de telefone **'{codigo_tel}'** não consta cadastrado no sistema (aba Controle_Telefone).")
-                        elif tipo_acao == "Retirada" and status_atual == "Em Uso":
-                            st.error(f"❌ O telefone **'{codigo_tel}'** já está em uso por **{responsavel_atual}**. Não é possível realizar uma nova retirada.")
-                        elif tipo_acao == "Devolução" and status_atual == "Disponível":
-                            st.error(f"❌ O telefone **'{codigo_tel}'** consta como devolvido/disponível. Não é possível registrar devolução.")
-                        else:
-                            nome_colaborador = base_colaboradores[matricula]
-                            registrar_movimentacao(matricula, nome_colaborador, codigo_tel, tipo_acao)
-                            
-                            st.query_params.clear()
-                            
-                            st.balloons()
-                            st.success(f"✅ **{tipo_acao}** registrada com sucesso!\n- **Colaborador:** {nome_colaborador}\n- **Aparelho:** {codigo_tel}")
-                            st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
-
-    with aba_base:
-        if verificar_login_admin(key_suffix="painel_base"):
-            renderizar_painel_base(kiosk_mode=False)
-
-if __name__ == "__main__":
-    main()
+            st
