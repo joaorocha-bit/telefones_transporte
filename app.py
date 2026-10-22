@@ -30,6 +30,9 @@ if "admin_autenticado" not in st.session_state:
 if "modo_kiosk" not in st.session_state:
     st.session_state["modo_kiosk"] = False
 
+if "ultima_operacao" not in st.session_state:
+    st.session_state["ultima_operacao"] = None
+
 # ==========================================
 # FUNÇÕES DE AUTENTICAÇÃO E GOOGLE SHEETS
 # ==========================================
@@ -343,9 +346,6 @@ def renderizar_painel_base(kiosk_mode: bool = False):
 # INTERFACE PRINCIPAL DO APP
 # ==========================================
 def main():
-    if "ultima_operacao" not in st.session_state:
-    st.session_state["ultima_operacao"] = None
-    
     if st.session_state.get("modo_kiosk", False):
         st.markdown("""
             <style>
@@ -386,67 +386,65 @@ def main():
         "Painel Base (QR Code & Status)"
     ])
 
+    # --- ABA 1: FORMULÁRIO DO COLABORADOR ---
     with aba_usuario:
-    params = st.query_params
-    t_param = params.get("t")
-    s_param = params.get("s")
-    
-    token_valido, mensagem_erro = validar_token(t_param, s_param)
-    
-    if not token_valido:
-        st.error(mensagem_erro)
-    else:
-        st.success("🔒 Acesso validado presencialmente.")
-        st.markdown("---")
+        params = st.query_params
+        t_param = params.get("t")
+        s_param = params.get("s")
         
-        base_colaboradores = carregar_base_colaboradores()
+        token_valido, mensagem_erro = validar_token(t_param, s_param)
         
-        # clear_on_submit=True limpa os campos imediatamente ao clicar
-        with st.form("form_registro", clear_on_submit=True):
-            tipo_acao = st.radio("Selecione a ação:", ["Retirada", "Devolução"], horizontal=True)
-            matricula = st.text_input("Matrícula do Colaborador (Somente números).").strip()
-            codigo_tel = st.text_input("Código do Telefone.").strip().upper()
+        if not token_valido:
+            st.error(mensagem_erro)
+        else:
+            st.success("🔒 Acesso validado presencialmente.")
+            st.markdown("---")
             
-            submit = st.form_submit_button("Confirmar Operação", type="primary")
+            base_colaboradores = carregar_base_colaboradores()
             
-            if submit:
-                # 🎯 TRAVA DE IDEMPOTÊNCIA: Gera uma chave única da tentativa
-                chave_operacao = f"{tipo_acao}_{matricula}_{codigo_tel}"
+            with st.form("form_registro", clear_on_submit=True):
+                tipo_acao = st.radio("Selecione a ação:", ["Retirada", "Devolução"], horizontal=True)
+                matricula = st.text_input("Matrícula do Colaborador (Somente números).").strip()
+                codigo_tel = st.text_input("Código do Telefone.").strip().upper()
                 
-                # Se for um duplo clique da MESMA operação recém-feita, apenas reexibe sucesso
-                if st.session_state.get("ultima_operacao") == chave_operacao:
-                    st.success(f"✅ **{tipo_acao}** já confirmada com sucesso!")
-                    st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
-                else:
-                    re_valido, re_msg = validar_token(t_param, s_param)
+                submit = st.form_submit_button("Confirmar Operação", type="primary")
+                
+                if submit:
+                    chave_operacao = f"{tipo_acao}_{matricula}_{codigo_tel}"
                     
-                    if not re_valido:
-                        st.error("⏱️ O tempo do QR Code expirou enquanto você preenchia. Escaneie novamente na base.")
-                    elif not matricula or not codigo_tel:
-                        st.warning("⚠️ Preencha a Matrícula e o Código do Telefone.")
-                    elif matricula not in base_colaboradores:
-                        st.error(f"❌ Matrícula '{matricula}' não encontrada. Verifique com a supervisão.")
+                    if st.session_state.get("ultima_operacao") == chave_operacao:
+                        st.success(f"✅ **{tipo_acao}** já confirmada com sucesso!")
+                        st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
                     else:
-                        status_atual, responsavel_atual, existe_no_cadastro = consultar_status_telefone_especifico(codigo_tel)
+                        re_valido, re_msg = validar_token(t_param, s_param)
                         
-                        if not existe_no_cadastro:
-                            st.error(f"❌ O código de telefone **'{codigo_tel}'** não consta cadastrado no sistema (aba Controle_Telefone).")
-                        elif tipo_acao == "Retirada" and status_atual == "Em Uso":
-                            st.error(f"❌ O telefone **'{codigo_tel}'** já está em uso por **{responsavel_atual}**. Não é possível realizar uma nova retirada.")
-                        elif tipo_acao == "Devolução" and status_atual == "Disponível":
-                            st.error(f"❌ O telefone **'{codigo_tel}'** consta como devolvido/disponível. Não é possível registrar devolução.")
+                        if not re_valido:
+                            st.error("⏱️ O tempo do QR Code expirou enquanto você preenchia. Escaneie novamente na base.")
+                        elif not matricula or not codigo_tel:
+                            st.warning("⚠️ Preencha a Matrícula e o Código do Telefone.")
+                        elif matricula not in base_colaboradores:
+                            st.error(f"❌ Matrícula '{matricula}' não encontrada. Verifique com a supervisão.")
                         else:
-                            nome_colaborador = base_colaboradores[matricula]
+                            status_atual, responsavel_atual, existe_no_cadastro = consultar_status_telefone_especifico(codigo_tel)
                             
-                            # Feedback visual imediato durante a gravação
-                            with st.spinner("Registrando operação..."):
-                                registrar_movimentacao(matricula, nome_colaborador, codigo_tel, tipo_acao)
-                                # Salva a chave para bloquear cliques duplos subsequentes
-                                st.session_state["ultima_operacao"] = chave_operacao
-                            
-                            st.query_params.clear()
-                            st.success(f"✅ **{tipo_acao}** registrada com sucesso!\n- **Colaborador:** {nome_colaborador}\n- **Aparelho:** {codigo_tel}")
-                            st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
+                            if not existe_no_cadastro:
+                                st.error(f"❌ O código de telefone **'{codigo_tel}'** não consta cadastrado no sistema (aba Controle_Telefone).")
+                            elif tipo_acao == "Retirada" and status_atual == "Em Uso":
+                                st.error(f"❌ O telefone **'{codigo_tel}'** já está em uso por **{responsavel_atual}**. Não é possível realizar uma nova retirada.")
+                            elif tipo_acao == "Devolução" and status_atual == "Disponível":
+                                st.error(f"❌ O telefone **'{codigo_tel}'** consta como devolvido/disponível. Não é possível registrar devolução.")
+                            else:
+                                nome_colaborador = base_colaboradores[matricula]
+                                
+                                with st.spinner("Registrando operação..."):
+                                    registrar_movimentacao(matricula, nome_colaborador, codigo_tel, tipo_acao)
+                                    st.session_state["ultima_operacao"] = chave_operacao
+                                
+                                st.query_params.clear()
+                                st.success(f"✅ **{tipo_acao}** registrada com sucesso!\n- **Colaborador:** {nome_colaborador}\n- **Aparelho:** {codigo_tel}")
+                                st.info("Para registrar outro aparelho, escaneie novamente o QR Code da tela.")
+
+    # --- ABA 2: PAINEL BASE (QR CODE & STATUS) ---
     with aba_base:
         if verificar_login_admin(key_suffix="painel_base"):
             renderizar_painel_base(kiosk_mode=False)
