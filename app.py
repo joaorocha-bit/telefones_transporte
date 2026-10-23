@@ -8,13 +8,17 @@ import hmac
 import hashlib
 import gspread
 from google.oauth2.service_account import Credentials
+import os
 
 # ==========================================
 # CONFIGURAÇÃO E SEGURANÇA
 # ==========================================
 st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout="wide")
 
-APP_URL = st.secrets.get("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
+try:
+    APP_URL = st.secrets.get("APP_URL", os.getenv("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/"))
+except Exception:
+    APP_URL = os.getenv("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
 SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
 ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
 TEMPO_EXPIRACAO_MINUTOS = 2 
