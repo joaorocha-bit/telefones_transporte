@@ -15,13 +15,16 @@ import os
 # ==========================================
 st.set_page_config(page_title="Controle de Telefones", page_icon="📱", layout="wide")
 
-try:
-    APP_URL = st.secrets.get("APP_URL", os.getenv("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/"))
-except Exception:
-    APP_URL = os.getenv("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
-SECRET_KEY = st.secrets.get("SECRET_KEY", "chave_secreta_super_segura_123")
-ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", "admin123")
-TEMPO_EXPIRACAO_MINUTOS = 2 
+def get_secret(key: str, default: str = "") -> str:
+    try:
+        return st.secrets.get(key, os.getenv(key, default))
+    except Exception:
+        return os.getenv(key, default)
+
+APP_URL = get_secret("APP_URL", "https://telefonestransporte-ndzmusne7o33caaqh6tcwz.streamlit.app/")
+SECRET_KEY = get_secret("SECRET_KEY", "chave_secreta_super_segura_123")
+ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "admin123")
+TEMPO_EXPIRACAO_MINUTOS = 2
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
